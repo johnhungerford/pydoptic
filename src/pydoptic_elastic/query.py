@@ -60,7 +60,7 @@ class ExistsQuery(Query[M]):
 
     @property
     def model(self) -> Type[M]:
-        return self.select.model
+        return self.select.origin
 
 class TermQuery(Query[M]):
     def __init__(self, select: Select[M, str], value: str, **options) -> None:
@@ -80,7 +80,7 @@ class TermQuery(Query[M]):
 
     @property
     def model(self) -> Type[M]:
-        return self.select.model
+        return self.select.origin
 
 class BoolQuery(Query[M]):
     def __init__(self, should: List[Query[M]], must: List[Query[M]], filter: List[Query[M]], must_not: List[Query[M]], minimum_should_match: int | None = None) -> None:
@@ -151,4 +151,4 @@ class MatchQuery(Query[M]):
 
     @property
     def model(self) -> Type[M]:
-        return self.select.model
+        return self.select.origin

@@ -116,7 +116,7 @@ class Select(Generic[A, B]):
     def __call__(self, next: 'Select[B, C]') -> 'Select[A, C]':
         return self.then(next)
 
-    @property
+    @cached_property
     def attributes(self) -> List['AttributeSelect[A, Any]']:
         match self:
             case AttributeSelect():
@@ -125,10 +125,6 @@ class Select(Generic[A, B]):
                 return [*(attr for attr in select_1.attributes), select_2]
             case _:
                 raise ValueError()
-
-    @property
-    def model(self) -> Type[A]:
-        raise NotImplementedError()
             
     @property
     def path(self) -> str:
@@ -137,13 +133,17 @@ class Select(Generic[A, B]):
     @property
     def target(self) -> Type[B]:
         match self:
-            case AttributeSelect(_target=tgt):
-                return tgt
+            case AttributeSelect():
+                return self._target
             case LinkedSelect(select_2=select_2):
-                return select_2.target
+                return select_2._target
             case _:
                 raise ValueError()
-            
+
+    @property
+    def origin(self) -> Type[A]:
+        return self.attributes[0]._origin
+
     def get_safe(self, target: Selectable | Dict[str, Any]) -> SelectValue[B]:
         try:
             return self.get_unsafe(target)
@@ -725,10 +725,6 @@ class AttributeSelect(Generic[A, B], Select[A, B]):
     def __init__(self, l: str, o: Type[A], t: Type[B], d: Dict[str, Any], io: bool, ia: bool):
         raise NotImplementedError('Abstract base class AttributeSelect should not be implemented directly')
 
-    @property
-    def model(self) -> Type[A]:
-        return self._origin
-
     @classmethod
     def val(cls, _label: str, _origin: Type[A], _target: Type[B], _data: Dict[str, Any]) -> Prop[A, B]:
         return Prop(_label, _origin, _target, _data, False, False) # type: ignore
@@ -785,10 +781,6 @@ class PropOptArr(Generic[A, B], AttributeSelect[A, B], SelectOptArr[A, B]):
 class LinkedSelect(Generic[A, B, C], Select[A, C]):
     select_1: Select[A, B]
     select_2: AttributeSelect[B, C]
-
-    @cached_property
-    def model(self) -> Type[A]:
-        return self.select_1.model
 
 @dataclass(frozen=True)
 class LinkedSelectVal(Generic[A, B, C], LinkedSelect[A, B, C], SelectVal[A, C]):
