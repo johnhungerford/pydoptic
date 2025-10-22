@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pydoptic"
+version = "0.0.1"
+authors = [{ name = "John Hungerford" }]
+urls = { Source = "https://github.com/johnhungerford/selector-model" }
+description = "Data models based on reified optics"
+readme = "README.md"
+requires-python = ">=3.8,<3.14"
+dependencies = [
+    "jsonschema==4.25.1",
+    "elasticsearch==8.14.0"
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest~=8.4.2",
+]
+types = [
+    "mypy~=1.18.2",
+    "types-jsonschema~=4.25.1"
+]
