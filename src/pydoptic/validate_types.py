@@ -38,6 +38,9 @@ def decompose_annotated_type (typ: Type[Any]) -> Type[Any] | None:
     return None
 
 Validator = Callable[[Any], str | None]
+"""
+Validate a value, returning None if valid and an error message if invalid
+"""
 
 def validate_type(is_opt: bool, is_arr: bool, selector_target: Type[Any], value: Any, validators: Dict[Type[Any], Validator]) -> str | None:
     if selector_target in validators:

@@ -1022,15 +1022,15 @@ class PropArr(Generic[A, B], PropSelect[A, B], SelectArr[A, B]):
 @dataclass(frozen=True)
 class PropOptArr(Generic[A, B], PropSelect[A, B], SelectOptArr[A, B]):
     """
-    An optional, array (or `List`) property
+    An optional array (or `List`) property
     """
     @property
-    def option(self) -> Prop[A, List[B]]:
+    def optional(self) -> PropOpt[A, List[B]]:
         """
         An optional, non-array version of the array property, exposing the `List` in the target type. 
         Limited composition, but can provide greater control when setting/updating/clearing values.
         """
-        return Prop(self.label, self.origin, List[self.target], self.data, False, False) # type: ignore
+        return Prop(self.label, self.origin, List[self.target], self.data, True, False) # type: ignore
 
     @property
     def value(self) -> Prop[A, List[B] | None]:

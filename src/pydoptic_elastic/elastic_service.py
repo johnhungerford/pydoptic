@@ -61,13 +61,13 @@ class ElasticService:
 
     def search_partial(self, query: Query[M], source: Iterable[Select[M, Any]] | None = None, **kwargs) -> Iterable[PartialModel[M]]:
         _kwargs = kwargs if source is None else {'source': [sel.path for sel in source], **kwargs}
-        search_results = self.__client.search(index=query.model._get_index_name(), query=query.to_dict(), **kwargs)
+        search_results = self.__client.search(index=query.model._get_index_name(), query=query.to_dict(), **_kwargs)
         for hit in search_results['hits']['hits']:
             _source = hit['_source']
             yield query.model.partial(**_source)
 
     def search_raw(self, query: Query[M], source: Iterable[Select[M, Any]] | None = None, **kwargs) -> Iterable[Dict[str, Any]]:
         _kwargs = kwargs if source is None else {'source': [sel.path for sel in source], **kwargs}
-        search_results = self.__client.search(index=query.model._get_index_name(), query=query.to_dict(), **kwargs)
+        search_results = self.__client.search(index=query.model._get_index_name(), query=query.to_dict(), **_kwargs)
         for hit in search_results['hits']['hits']:
             yield hit['_source']

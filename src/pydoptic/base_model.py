@@ -118,6 +118,9 @@ class BaseModel(Selectable, metaclass=BaseModelMeta):
     """
     _selectors: Dict[Type[Any], Dict[str, PropSelect[Any, Any]]]
     validators: Dict[Type[Any], Validator]
+    """
+    Table for looking up validation functions by type
+    """
 
     @classmethod
     def selectors(cls) -> Dict[str, PropSelect[Self, Any]]:
