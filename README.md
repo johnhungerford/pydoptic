@@ -1,8 +1,11 @@
-from pydoptic_elastic import ElasticModel
-
 # Pydoptic
 
-A data modeling framework based on reified optics
+A data modeling library based on reified optics.
+
+A good alternative to Pydantic when one or more of the following is true:
+1. You rarely use complete instances of your modeled data
+2. You frequently need to retrieve and manipulate deeply nested values
+3. You neeed a type-safe way to refer to properties when querying remote data
 
 ## Why?
 
