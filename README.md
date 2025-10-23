@@ -6,7 +6,7 @@ A data modeling framework based on reified optics
 
 ## Why?
 
-In every programming language, data is modeled by the type of container used to store it in memory. In Python, this typically looks like the following:
+In every programming language, data is modeled as a type of container used to store it in memory. In Python, this generally looks something like the following:
 
 ```python3
 from pydantic import BaseModel
@@ -36,17 +36,17 @@ class Person(BaseModel):
     is_active: bool
 ```
 
-While the above class definitions do provide a reasonably precisely typed description of the data we expect to deal with, their actual utility when it comes to coding is fairly limited. At most they can do the following:
+While the above class definitions do provide a typed description of the data we expect to deal with, their actual utility when it comes to *doing* anything with the data is actually fairly limited. At most they can do the following:
 
 1. Validate and then represent a complete instance of each data type, either from parameters or some serialized source (e.g., JSON)
 2. Provide access to any property that can be validated with a type checker
-3. Generate a valid serialized representation (e.g. JSON)
+3. Generate a valid serialized representation of an instance (e.g. JSON)
 
 While this is certainly useful, consider all the other things we might want to do:
 
-1. Consume and validate an incomplete model of our data (e.g., a `Person`'s `name` and `birth_date`, but nothing else)
-2. Access potentially missing values of an incomplete model without sacrificing type precision on the complete model (e.g., `Person.address` should not be `Optional` in the full model, yet in some cases you may not want to include it)
-3. Query just the `name` and `birth_date` from our data store. Nothing in the data model allows us to *specify the field itself* -- only the *value* of the field. This is an important distinction.
+1. Consume and validate an *incomplete* instance of our data (e.g., a `Person`'s `name` and `birth_date`, but nothing else) without making the *complete* data model less precise (e.g., by making `Person.address` optional)
+2. Access potentially missing values of an incomplete model
+3. Query just the `name` and `birth_date` from a database. Nothing in the data model allows us to *specify the field itself* -- only the *value* of the field. This is an important distinction.
 4. Update the `is_active` flag of every person in every organization a person is a member of without having to check if `Person.organizations` or `Organization.members` are `None`.
 
 Achieving the above with ordinary data models is inconvenient at best. Dealing with incomplete data requires defining new types for each use case or abandoning type safety altogether. While data models can read and write (complete) records to a datastore, they provide no mechanism for helping us specify the parts of the data model that of interest to us, such as when we want to specify which fields to retrieve or define a query setting some constraint on a particular field. In general we have to specify field names as strings, losing any pre-runtime validation. Finally, data models provide no abstractions for manipulating nested data, nor do they provide any mechanism that could be used to create such abstractions.
@@ -55,7 +55,7 @@ Pydoptic provides an alternative way to model data in Python -- and indeed in an
 
 ## How?
 
-Whereas traditional data models represent data as *containers*, Pydoptic represents data as *references*. A "property" on a traditional data type is a value that the type in question will hold. In Pydoptic, a "property" is a *description* of a value. This description can be used to store a value in an object and retrieve just as in a traditional model, but it can *also* be used to store it in a data backend and retrieve it, or query it, or update it, or... anything else that might need to be done with it!
+Whereas traditional data models represent data as *containers* of properties, Pydoptic represents data as collections of *references* to properties. IN a traditional data type, a "property" is a value that a value of the type in question will contain. In Pydoptic, a "property" is a *description* of a value belonging to a type. This description can be used to store a value in an object and retrieve just as in a traditional model, but it can *also* be used to store it in a data backend and retrieve it, or query it, or update it, or... pretty much anything else you can think of that might need to be done with it!
 
 Here is what a Pydoptic version of the data model above looks like:
 
@@ -86,11 +86,13 @@ class Person(BaseModel):
     is_active: Prop['Person', bool]
 ```
 
-While the type signatures require a bit more boilerplate, the information they provide to the type checkers is extremely powerful. Let's see what it can do for us.
+The type signatures of the properties require some more boilerplate; most notably, they all contain references to the model class that they belong to. This may seem redundant, but it's a crucial feature that makes them as powerful as the are: because they contain references back to the classes they belong to, they can be used entirely independently of those classes. Each property -- which is only a *class* attribute -- is initialized with a value containing references to both its "origin" type (the model class) and its "target" type (the second type parameter on the right) as well as the attribute name and flags indicated whether it's optional (for `PropOpt` properties), array (`PropArr`), or both (`PropOptArr`).
+
+By constructing our properties as comprehensive metadata *about* values and their relationship with the model they belong to, rather than simply the values themselves, we provide ourselves with a much more flexible and powerful tool. Let's see what we can do with them.
 
 ### Basics
 
-Let's start with the basics. We can construct a model instance in the usual way:
+Let's start with the basics. These "props" would not be much use to us if we could not actually construct model instances. It turns out we can do this in the usual way:
 
 ```python3
 person = Person(name="John", address=Address(...), birth_date=..., phone_number=..., is_active=True)
@@ -99,7 +101,9 @@ print(person.name)
 # John
 ```
 
-The above succeeds even though `organizations` is missing because organizations is a `PropOptArr`, which is optional (hence `Opt`). Note that your type checker will complain that `person.name` is a `Prop` instead of a `str`. While Pydoptic does assign properties as model attributes (the `Prop` types should be defined only on the class), your type checker will not know this. The "Pydoptic" way to retrieve properties is not to access the attribute directly, but use the property itself!
+On initialization, the mode class constructs the `Prop` class attributes based on the type hints and keeps track of them internally. It then uses the known properties to validate keyword arguments that are provided when constructing a class instance. The above succeeds even though `organizations` is missing because organizations is a `PropOptArr`, which is optional. If we left out `name`, however, it would raise a `ValueError`.
+
+Note that your type checker will complain that `person.name` is a `Prop` instead of a `str`. While Pydoptic does assign properties as model attributes (the `Prop` types should be defined only on the class), your type checker will not know this. The "Pydoptic" way to retrieve properties is not to access the attribute directly, but use the property itself!
 
 ```python3
 person_name = Person.name.get_val(person)
@@ -124,7 +128,7 @@ print(statuses)
 # [False, True, True, False, ...]
 ```
 
-As your type checker should indicate, `select_related_status` is a `Selector[Person, bool]`, which we can use to retrieve and update all `is_active` properties nested within the original `person` via the path `organizations` -> `members` -> `is_active`. Since `Person.organizations` and `Organization.members` are optional properties, ordinarily retrieving and updating these values would require checking for `None` multiple times. Here is how you would do the same update in the ordinary way:
+As your type checker should indicate, `select_related_status` is a `Select[Person, bool]` which is composed from the `Prop`s `Person.organizations`, `Organization.members`, and `Person.is_active`. This particular chain of props can compose because the *target* type each lines up with *origin* type of the next. The resulting `Select` can then be used to retrieve and update all `Person.is_active` properties (the final `Prop` in the chain) nested within the original `person` via the path `organizations` -> `members` -> `is_active`. Since `Person.organizations` and `Organization.members` are optional properties, ordinarily retrieving and updating these values would require checking for `None` multiple times. Here is how you would do the same update in the ordinary way:
 
 ```python3
 if person.organizations is not None:
@@ -134,11 +138,11 @@ if person.organizations is not None:
                 member.is_active = !member.is_active
 ```
 
-The compositional properties of our `Prop` fields allow us to collapse all of that conditional logic into a single method `.update(lambda status: !status)`. Each `Prop[A, B]` can be chained with a `Prop[B, C]` to get a `Select[A, C]`. A `Select[A, C]` can be chained with a `Select[C, D]` (which could be a `Prop[C, D]`) to get a new `Select[A, D]`, and so on. All of the logic needed for getting from and setting to those nested fields is taken care of for you.
+The compositional properties of our `Prop` fields allow us to collapse all of that conditional logic into a single method `.update(lambda status: !status)`. Each `Prop[A, B]` can be chained with a `Prop[B, C]` to get a `Select[A, C]`. A `Select[A, C]` can be chained with a `Select[C, D]` (which could be a `Prop[C, D]`) to get a new `Select[A, D]`, and so on. All of the logic needed for getting from and setting to those nested values is taken care of for you.
 
 ### Incomplete data
 
-By separating our property types from the actual container, handling incomplete data becomes much simpler. The same `Prop`s we use to set and retrieve data a model like `Person` can be used to do the same in incomplete models as well.
+By separating our property types from the actual container, handling incomplete data becomes simpler without losing type precision. The same `Prop`s we use to set and retrieve data a model like `Person` can be used to do the same in incomplete models as well.
 
 ```python3
 partial_person: PartialModel[Person] = Person.partial(name="John", birth_date=...)
@@ -179,15 +183,37 @@ class Person(ElasticModel):
     organizations: PropOptArr['Person', Organization]
     is_active: Prop['Person', bool]
 
-query: Query[Person] = Query.match(Person.name, "John")
-
 elastic_service = ElasticService(Elasticsearch('http://localhost:9200'))
 
-person: PartialModel[Person] = elastic_service.search_partial(query, source=[Person.name, Person.birth_date])
+elastic_service.create_index(Person)
 
-print(Person.name.get_val_unsafe(person))
-# John
+original_person = Person(name='John', ...)
+
+elastic_service.index(original_person)
+
+query: Query[Person] = Query.match(Person.name, Person.get_val(original_person))
+
+found_people: List[PartialModel[Person]] = elastic_service.search_partial(query, source=[Person.name, Person.birth_date])
+
+for found_person in found_people:
+    print(Person.name.get_val_unsafe(person))
+    # John
 ```
 
+The above data model is built using the `ElasticModel` base class, which is a specialized subtype of `BaseModel` that captures property metadata specifically for Elasticsearch (e.g., the index name and field mappings). `Prop`s can be customized with `elastic_prop` to include field-level metadata like `mapping` (the `Prop` type has a metadata field for arbitrary keyword data for use cases like this).
 
+`Query` is a representation of queries based on Pydoptic types. For instance, the match query is constructing from specifying the field to match with a `Prop` value, and specifying the value to match with a value whose type matches the prop's target type. The result, when querying `Person.name` is a `Query[Person]`, which contains a reference to the `Person` class, which can be used to resolve the appropriate index name.
 
+`ElasticService` provides an API for dealing with indices and documents using the Pydoptic-based `ElasticModel` and `Query` types. We first create our `Person` index by simply passing the class to `elastic_service.create_index`. The index name is generated by default from the class name (`person`) and the field mappings are constructed from the properties. We then index a document by passing it to `elastic_service.index`; since the instance contains a reference to the class, the index name can be resolved properly. Finally, we search for the original person by using our `Query[Person]`, which matches on the original person's name. When searching, however, we use a special variant `elastic_service.search_partial` which allows us to provide a `source` parameter, where we specify only two `Person` properties: `Person.name` and `Person.birth_date`. The result is a list of `PartialModel[Person]` instances containing only those fields.
+
+You'll notice at no point in the above are we forced to pass any index or property names as strings. All the information required to resolve the indices and fields are contained in our model types.
+
+### Reified optics
+
+I hope the above has indicated clearly enough how pydoptic can be used to solve the problems indicated in the first section. At this point its worth saying a few words about the approach used.
+
+Pydoptic is inspired by a concept from functional programming called "optics". In functional programming optics are not just useful but pretty much necessary due to the relative difficulty of updating nested properties in immutable data structures. In imperative languages like Python, this is generally easier to do so they tend not to be used much. There a couple of optics libraries out there for Python, but they tend to be functional in the full sense, which is to say they are designed to create immutable copies of dataclasses rather than mutate them.
+
+Pydoptic's approach is the first to my knowledge to take the compositional properties of optics types from functional programming while giving them power to mutate objects. The second way it differs from most functional optics libraries is in "reifying" the optics. In functional programming, optics are functions that retrieve or update data and can be composed in various ways; in Pydoptic, they are, at bottom, *descriptions* of the things that can be accessed or updated. It is this latter feature that gives them much more *general* power than traditional optics.
+
+This concept of "reified optics" comes from the Scala project (ZIO schema)[], which provides (among other things) a similar mechanism for referencing properties via "accessors". Pydoptic provides a simplified version of this approach appropriate to Python and its more limited (though still quite powerful!) type system. The main innovation of Pydoptic (beyond bringing optics to mutable data) is that it models data "optics-first," unlike ZIO-schema, which (for good reasons connected with Scala and the JVM) *derives* optics *from* traditional data models (i.e., data classes).

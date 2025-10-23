@@ -173,12 +173,14 @@ def test_partial_model_should_accept_valid_missing_arguments():
     assert model_value.annotation == "str" # type: ignore[attr-defined]
     assert model_value.select_val_empty == 1 # type: ignore[attr-defined]
     assert model_value.select_val_renamed == 1 # type: ignore[attr-defined]
-    assert model_value.select_opt_empty is None # type: ignore[attr-defined]
+    with pytest.raises(AttributeError):
+        model_value.select_opt_empty # type: ignore[attr-defined]
     assert model_value.select_opt_renamed == 1 # type: ignore[attr-defined]
     assert model_value.select_arr_empty == [1,2,3] # type: ignore[attr-defined]
     assert model_value.select_arr_renamed == [1,2,3] # type: ignore[attr-defined]
     assert model_value.select_opt_arr_empty == [1,2,3] # type: ignore[attr-defined]
-    assert model_value.select_opt_arr_renamed is None # type: ignore[attr-defined]
+    with pytest.raises(AttributeError):
+        model_value.select_opt_arr_renamed # type: ignore[attr-defined]
 
 def test_partial_model_should_accept_partial_model_for_nested_models_if_complete():
     model_value = TestModel.partial(
@@ -242,7 +244,8 @@ def test_partial_model_init_should_succeed_if_required_param_is_missing():
         ),
     )
 
-    assert model_value.annotation is None # type: ignore[attr-defined]
+    with pytest.raises(AttributeError):
+        model_value.annotation # type: ignore[attr-defined]
     assert model_value.select_val_empty == 1 # type: ignore[attr-defined]
     assert model_value.select_val_renamed == 1 # type: ignore[attr-defined]
     assert model_value.select_opt_empty == 1 # type: ignore[attr-defined]
@@ -507,7 +510,7 @@ def test_partial_model_as_mapping_full_should_be_reversable():
         ),
     )
 
-    dict_value = model_value.as_mapping_full
+    dict_value = model_value.as_mapping_full()
 
     model_value_2 = TestModel.partial(**dict_value)
 
@@ -535,7 +538,7 @@ def test_base_model_select_parts_should_generate_partial_model_from_selectors():
         TestModel.other(Other.another)(Another.value),
     )
 
-    assert partial_model.as_mapping_full == {
+    assert partial_model.as_mapping_full() == {
         'select_arr_empty': [1,2,3],
         'other': {
             'value': True,

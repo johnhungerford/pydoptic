@@ -1,12 +1,15 @@
 from __future__ import annotations
-from pydoptic.selector import Select, AttributeSelect, SelectVal, SelectOpt, SelectArr, SelectOptArr, Selectable, SelectValue, A, B
+from pydoptic.selector import Select, PropSelect, SelectVal, SelectOpt, SelectArr, SelectOptArr, Selectable, SelectValue, A, B
 
 from dataclasses import dataclass
 from inspect import isclass
-from typing import Any, Callable, Dict, Generic, List, Self, Set, Type, TypeVar, TypedDict, get_args, get_origin, get_type_hints
+from typing import Any, Callable, Dict, Generic, List, Self, Set, Type, TypeVar, TypedDict, get_args, get_origin, \
+    get_type_hints, Mapping, Tuple
 
 from pydoptic.validate_types import validate_type, Validator
 
+X = TypeVar("X")
+Y = TypeVar("Y")
 
 @dataclass(frozen=True)
 class SelectProxy(Generic[B]):
@@ -16,35 +19,52 @@ class SelectProxy(Generic[B]):
 def select(name: str | None = None, **data) -> Any:
     return SelectProxy(name=name, data=data)
 
-def _selector_from_select_proxy(name: str, select_type: Type[Select[Any, Any]], origin: Type[Any], target: Type[Any], proxy: SelectProxy) -> AttributeSelect[Any, Any]:
+def _selector_from_select_proxy(name: str, select_type: Type[Select[Any, Any]], origin: Type[Any], target: Type[Any], proxy: SelectProxy) -> PropSelect[Any, Any]:
     if issubclass(select_type, SelectVal):
-        return AttributeSelect.val(proxy.name or name, origin, target, proxy.data) # type: ignore
+        return PropSelect.val(proxy.name or name, origin, target, proxy.data) # type: ignore
     if issubclass(select_type, SelectOpt):
-        return AttributeSelect.opt(proxy.name or name, origin, target, proxy.data) # type: ignore
+        return PropSelect.opt(proxy.name or name, origin, target, proxy.data) # type: ignore
     if issubclass(select_type, SelectArr):
-        return AttributeSelect.arr(proxy.name or name, origin, target, proxy.data) # type: ignore
+        return PropSelect.arr(proxy.name or name, origin, target, proxy.data) # type: ignore
     if issubclass(select_type, SelectOptArr):
-        return AttributeSelect.opt_arr(proxy.name or name, origin, target, proxy.data) # type: ignore
+        return PropSelect.opt_arr(proxy.name or name, origin, target, proxy.data) # type: ignore
     
     raise ValueError(f'Unsupported subtype of Select: {select_type.__name__}. Use Prop, PropOpt, PropArr, or PropOptArr')
 
 
 class BaseModelMeta(type):
+    def __new__(mcls, class_name, bases, dct: Dict[str, Any]):
+        annos: Dict[str, Type[Any]] = dct.get('__annotations__', {})
+        slots: List[str] = []
+        print(dct.get('__slots__', None))
+        dct['__slots__'] = slots
+        for name, tpe in annos.items():
+            if isclass(tpe) and issubclass(tpe, PropSelect):
+                if name in dct:
+                    given_prop = dct[name]
+                    if isinstance(given_prop, SelectProxy):
+                        slots.append(given_prop.name or name)
+                    elif isinstance(given_prop, PropSelect):
+                        slots.append(given_prop.label)
+                    else:
+                        slots.append(name)
+        # Call the parent metaclass's __new__ to create the class
+        return super().__new__(mcls, class_name, bases, dct)
+
     def __getattribute__(cls, name_to_get: str):
         if cls is not BaseModel:
             try:
-                _selectors: Dict[Type[Any], Dict[str, AttributeSelect[Any, Any]]] = type.__getattribute__(cls, '_selectors')
+                _selectors: Dict[Type[Any], Dict[str, PropSelect[Any, Any]]] = type.__getattribute__(cls, '_selectors')
             except AttributeError:
                 _selectors = {}
                 setattr(cls, '_selectors', {})
 
             if cls not in _selectors:
-                selectors: Dict[str, AttributeSelect[Any, Any]] = {}
+                selectors: Dict[str, PropSelect[Any, Any]] = {}
                 _selectors[cls] = selectors
 
                 cls_name = cls.__name__
                 type_hints = get_type_hints(cls, include_extras=True)
-                print(type_hints)
                 for name, _type in type_hints.items():
                     origin = get_origin(_type)
                     type_params = get_args(_type)
@@ -53,13 +73,12 @@ class BaseModelMeta(type):
                         assert len(type_params) == 2, f'Selector {name} on model {cls_name} has more than three type paramaters: {_type}'
                         assert issubclass(cls, type_params[0]), f'Selector {name} on model {cls_name} selects from {type_params[0]} instead of {cls_name}: {_type}'
                         target = type_params[1]
-                        given_selector: Any | None = None
                         if hasattr(cls, name):
-                            given_selector = getattr(cls, name)
+                            given_selector: Any = getattr(cls, name)
                             if given_selector is not None:
                                 if isinstance(given_selector, SelectProxy):
                                     selector = _selector_from_select_proxy(name, origin, cls, target, given_selector)
-                                elif isinstance(given_selector, AttributeSelect):
+                                elif isinstance(given_selector, PropSelect):
                                     selector = given_selector
                                 else:
                                     raise ValueError(f'Invalid selector assigned to {name}: {given_selector}')
@@ -68,7 +87,7 @@ class BaseModelMeta(type):
                         else:
                             selector = _selector_from_select_proxy(name, origin, cls, target, SelectProxy(None, {}))
                         setattr(cls, name, selector)
-                        selectors[selector._label] = selector
+                        selectors[selector.label] = selector
 
         return type.__getattribute__(cls, name_to_get)
 
@@ -78,37 +97,72 @@ def _fully_validate(target: Type[M], value: Any, validators: Dict[Type[Any], Val
     elif isinstance(value, PartialModel):
         if not issubclass(value.model, target):
             raise ValueError(f'received partial model of {value.model} instead of expected model {target}')
-        return target(**value.as_mapping, _allow_extra_args=True, _validators=validators)
+        return target(**value.as_mapping(), _allow_extra_args=True, _validators=validators)
     elif isinstance(value, dict):
         return target(**value, _validators=validators)
     else:
+        print(f'{target}, {target.__name__}, {value}')
         raise ValueError(f'expected type {target.__name__} (or dict) but received: {type(value).__name__}.')
 
 class BaseModel(Selectable, metaclass=BaseModelMeta):
-    _selectors: Dict[Type[Any], Dict[str, AttributeSelect[Any, Any]]]
+    """
+    Base type for a Pydoptic model.
+
+    A Pydoptic model consists of `PropSelect` class attributes (`Prop`, `PropOpt`, `PropArr`, and `PropOptArr`) which
+    (1) determine which instance attributes are supported, and (2) provide a mechanism for accessing and manipulating data
+    both within instances and other, potentially incomplete data sources (e.g., `PartialModel` or `dict`)
+
+    Instances are fully validated.
+
+    Can include class attribute `validators` to specify how certain types should be validated.
+    """
+    _selectors: Dict[Type[Any], Dict[str, PropSelect[Any, Any]]]
     validators: Dict[Type[Any], Validator]
 
     @classmethod
-    def selectors(cls) -> Dict[str, AttributeSelect[Any, Any]]:
+    def selectors(cls) -> Dict[str, PropSelect[Self, Any]]:
+        """
+        All the selectors for this subclass
+        """
         return cls._selectors[cls]
 
     @classmethod
     def partial(cls, **kwargs) -> PartialModel[Self]:
+        """
+        Create a partial instance of this model with a subset of properties. Required properties can be 
+        omitted, but must be otherwise valid. See `PartialModel`.
+        """
         return PartialModel(cls, **kwargs)
 
     @classmethod
-    def construct_partial(cls, values: Dict[AttributeSelect[Self, Any], Any], **kwargs) -> PartialModel[Self]:
-        return PartialModel(cls, **{sel._label: val for sel, val in values.items()}, **kwargs)
+    def construct_partial(cls, values: Dict[PropSelect[Self, Any], Any], **kwargs) -> PartialModel[Self]:
+        """
+        Create a partial instance of this model using selectors to specify fields. Required properties can be 
+        omitted, but must be otherwise valid. See `PartialModel`.
+        """
+        return PartialModel(cls, **{sel.label: val for sel, val in values.items()}, **kwargs)
 
     @classmethod
-    def construct(cls, values: Dict[AttributeSelect[Self, Any], Any], **kwargs) -> Self:
-        return cls(**{sel._label: val for sel, val in values.items()}, **kwargs)
+    def construct(cls, values: Dict[PropSelect[Self, Any], Any], **kwargs) -> Self:
+        """
+        Create an instance of this model using selectors to specify fields instead of keyword arguments. 
+        Required properties can be omitted, but must be otherwise valid. See `PartialModel`.
+        """
+        return cls(**{sel.label: val for sel, val in values.items()}, **kwargs)
 
     def as_partial(self) -> PartialModel[Self]:
-        return PartialModel(self.__class__, **self.as_mapping)
+        """
+        Convert to a `PartialModel`
+        """
+        return PartialModel(self.__class__, **self.as_mapping())
 
     def __init__(self, **kwargs):
-        self._dict: Dict[str, Any] = {}
+        """
+        Construct a model instance, providing all required properties as keyword arguments. Two specialized arguments
+        can also be included:
+          _allow_extra_args: don't fail when unrecognized properties are provided (they will be excluded, however).
+          _validators: a dict instance to lookup validators by type. Will merge with (and overwrite) the validators class attribute
+        """
         allow_extra_args = kwargs.get('_allow_extra_args', False)
         if '_allow_extra_args' in kwargs:
             del kwargs['_allow_extra_args']
@@ -117,44 +171,42 @@ class BaseModel(Selectable, metaclass=BaseModelMeta):
             validators.update(kwargs['_validators'])
             del kwargs['_validators']
         for selector in self.__class__.selectors().values():
-            if selector._label not in kwargs and not selector._is_opt:
-                raise ValueError(f'Missing required parameter {selector._label}')
-            if selector._label not in kwargs:
-                setattr(self, selector._label, None)
+            if selector.label not in kwargs and not selector.is_opt:
+                raise ValueError(f'Missing required parameter {selector.label}')
+            if selector.label not in kwargs:
+                setattr(self, selector.label, None)
             else:
-                value = kwargs[selector._label]
-                del kwargs[selector._label]
-                if value is None and not selector._is_opt:
-                    raise ValueError(f'Received empty value for required parameter {selector._label}')
+                value = kwargs[selector.label]
+                del kwargs[selector.label]
+                if value is None and not selector.is_opt:
+                    raise ValueError(f'Received empty value for required parameter {selector.label}')
                 if value is None:
-                    setattr(self, selector._label, None)
+                    setattr(self, selector.label, None)
                 else:
                     if isclass(selector.target) and issubclass(selector.target, BaseModel):
-                        if selector._is_arr:
+                        if selector.is_arr:
                             if not isinstance(value, list):
-                                raise ValueError(f'Received non-array value for array field {selector._label}')
+                                raise ValueError(f'Received non-array value for array field {selector.label}')
                             updated_values = []
                             for i, v in enumerate(value):
                                 try:
                                     updated_values.append(_fully_validate(selector.target, v, validators))
                                 except ValueError as ve:
-                                    raise ValueError(f'Property {selector._label} contains invalid element at index {i}: {ve}')
-                            self._dict[selector._label] = updated_values
-                            setattr(self, selector._label, updated_values)
+                                    raise ValueError(f'Property {selector.label} contains invalid element at index {i}: {ve}')
+                            setattr(self, selector.label, updated_values)
                         else:
                             try:
+                                print(selector.target)
                                 valid_value = _fully_validate(selector.target, value, validators)
-                                self._dict[selector._label] = valid_value
-                                setattr(self, selector._label, valid_value)     
+                                setattr(self, selector.label, valid_value)
                             except ValueError as ve:
-                                raise ValueError(f'Invalid property {selector._label}: {ve}')            
+                                raise ValueError(f'Invalid property {selector.label}: {ve}')            
                     else:
-                        error_message = validate_type(selector._is_opt, selector._is_arr, selector.target, value, validators)
+                        error_message = validate_type(selector.is_opt, selector.is_arr, selector.target, value, validators)
                         if error_message is not None:
-                            message = f'Invalid property {selector._label}: {error_message}'
+                            message = f'Invalid property {selector.label}: {error_message}'
                             raise ValueError(message)
-                        self._dict[selector._label] = value
-                        setattr(self, selector._label, value)      
+                        setattr(self, selector.label, value)
 
         if not allow_extra_args:
             for k, v in kwargs.items():
@@ -162,13 +214,36 @@ class BaseModel(Selectable, metaclass=BaseModelMeta):
                     raise ValueError(f'Unrecognized parameter {k} provided (value: {v})')
 
     def __repr__(self):
-        return self.__class__.__name__ + '(' + ', '.join(f'{k}={v}' for k, v in self._dict.items()) + ')'
+        return self.__class__.__name__ + '(' + ', '.join(f'{k}={v}' for k, v in self.as_mapping().items()) + ')'
 
-    def set_mapping(self, key, value):
-        super().set_mapping(key, value)
-        setattr(self, key, value)
+    def as_mapping(self) -> Mapping[str, Any]:
+        mapping: Dict[str, Any] = {}
+        for name in self.__class__.selectors().keys():
+            try:
+                value = getattr(self, name)
+                mapping[name] = value
+            except AttributeError:
+                ...
+        return mapping
+
+    def as_mapping_full(self) -> Mapping[str, Any]:
+        mapping: Dict[str, Any] = {}
+        for name in self.__class__.selectors().keys():
+            try:
+                value = getattr(self, name)
+                if isinstance(value, Selectable):
+                    mapping[name] = value.as_mapping_full()
+                else:
+                    mapping[name] = value
+            except AttributeError:
+                print('hi')
+                ...
+        return mapping
 
     def select_partial(self, *selectors: Select[Self, Any]) -> PartialModel[Self]:
+        """
+        Generate a partial version of this instance, selecting the data to retain with one or more `Select` instances.
+        """
         data: Dict[str, Any] = {}
         for selector in selectors:
             selector.copy_to(self, data)
@@ -189,59 +264,85 @@ def _partly_validate(target: Type[M], value: Any, validators: Dict[Type[Any], Va
 M = TypeVar('M', bound=BaseModel)
 
 class PartialModel(Generic[M], Selectable):
+    """
+    An incomplete version of model instances. Validates data without requiring that all required properties are present.
+    """
+    __slots__ = ['_dict', 'model']
+    model: Type[M]
+    _dict: Dict[str, Any]
+
     def as_model(self, **extra_args) -> M:
+        """
+        Convert to a complete model, providing any missing properties as keyword arguments.
+        """
         return self.model(**self._dict, **extra_args)
 
-    def construct_as_model(self, values: Dict[AttributeSelect[Self, Any], Any], **extra_args) -> M:
-        return self.model(**{sel._label: val for sel, val in values.items()}, **self._dict, **extra_args)
+    def construct_as_model(self, values: Dict[PropSelect[Self, Any], Any], **extra_args) -> M:
+        """
+        Convert to a complete model, providing any missing properties using `PropSelect` instances as lookups.
+        """
+        return self.model(**{sel.label: val for sel, val in values.items()}, **self._dict, **extra_args)
 
     def __init__(self, model: Type[M], **kwargs):
-        self.model = model
+        """
+        Construct a partial model from a model class and any desired properties. Validates provided properties without enforcing
+        required property types. Allows unrecognized properties (but does not include them).
+        """
+        object.__setattr__(self, '_dict', {})
+        object.__setattr__(self, 'model', model)
         validators = getattr(model, 'validators', {})
         if '__validators' in kwargs:
             validators.update(kwargs['__validators'])
             del kwargs['__validators']
-        self._dict: Dict[str, Any] = {}
         for selector in model.selectors().values():
-            if selector._label not in kwargs:
-                setattr(self, selector._label, None)
-                continue
-            else:
-                value = kwargs[selector._label]
-                if value is None:
-                    setattr(self, selector._label, None)
-                else:
+            if selector.label in kwargs:
+                value = kwargs[selector.label]
+                if value is not None:
                     if isclass(selector.target) and issubclass(selector.target, BaseModel):
-                        if selector._is_arr:
+                        if selector.is_arr:
                             if not isinstance(value, list):
-                                raise ValueError(f'Received non-array value for array field {selector._label}')
+                                raise ValueError(f'Received non-array value for array field {selector.label}')
                             updated_values = []
                             for i, v in enumerate(value):
                                 try:
                                     updated_values.append(_partly_validate(selector.target, v, validators))
                                 except ValueError as ve:
-                                    raise ValueError(f'Property {selector._label} contains invalid element at index {i}: {ve}')
-                            self._dict[selector._label] = updated_values
-                            setattr(self, selector._label, updated_values)
+                                    raise ValueError(f'Property {selector.label} contains invalid element at index {i}: {ve}')
+                            self._dict[selector.label] = updated_values
                         else:
                             try:
                                 valid_value = _partly_validate(selector.target, value, validators)
-                                self._dict[selector._label] = valid_value
-                                setattr(self, selector._label, valid_value)     
+                                self._dict[selector.label] = valid_value
                             except ValueError as ve:
-                                raise ValueError(f'Invalid property {selector._label}: {ve}')            
+                                raise ValueError(f'Invalid property {selector.label}: {ve}')            
                     else:
-                        error_message = validate_type(selector._is_opt, selector._is_arr, selector.target, value, validators)
+                        error_message = validate_type(selector.is_opt, selector.is_arr, selector.target, value, validators)
                         if error_message is not None:
-                            message = f'Invalid property {selector._label}: {error_message}'
+                            message = f'Invalid property {selector.label}: {error_message}'
                             raise ValueError(message)
-                        self._dict[selector._label] = value
-                        setattr(self, selector._label, value)  
+                        self._dict[selector.label] = value
 
     def __repr__(self):
         return 'Partial' + self.model.__name__ + '(' + ', '.join(f'{k}={v}' for k, v in self._dict.items()) + ')'
-    
+
+    def __getattr__(self, item):
+        try:
+            return object.__getattribute__(self, '_dict')[item]
+        except KeyError:
+            if item == 'model':
+                return object.__getattribute__(self, 'model')
+            raise AttributeError(item)
+
+    def __setattr__(self, key, value):
+        object.__getattribute__(self, '_dict')[key] = value
+
+    def as_mapping(self) -> Mapping[str, Any]:
+        return self._dict
+
     def select_partial(self, *selectors: Select[M, Any]) -> PartialModel[M]:
+        """
+        Generate another partial instance, selecting the data to retain with one or more `Select` instances.
+        """
         data: Dict[str, Any] = {}
         for selector in selectors:
             selector.copy_to_safe(self, data)

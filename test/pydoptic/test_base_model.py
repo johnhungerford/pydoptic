@@ -39,7 +39,7 @@ def test_base_model_should_construct_selectors():
     }
 
     for select in TestModel.selectors().values():
-        assert isinstance(select, AttributeSelect)
+        assert isinstance(select, PropSelect)
 
     assert TestModel.selectors()['annotation'] == TestModel.annotation
     assert TestModel.selectors()['select_val_empty'] == TestModel.select_val_empty
@@ -53,23 +53,23 @@ def test_base_model_should_construct_selectors():
     assert TestModel.selectors()['other'] == TestModel.other
 
 def test_base_model_should_construct_selector_from_annotation_only():
-    assert TestModel.annotation == AttributeSelect.val('annotation', TestModel, str, {})
+    assert TestModel.annotation == PropSelect.val('annotation', TestModel, str, {})
 
 def test_base_model_should_construct_selector_from_select():
-    assert TestModel.select_val_empty == AttributeSelect.val('select_val_empty', TestModel, int, {})
-    assert TestModel.select_val_name == AttributeSelect.val('select_val_renamed', TestModel, int, {})
+    assert TestModel.select_val_empty == PropSelect.val('select_val_empty', TestModel, int, {})
+    assert TestModel.select_val_name == PropSelect.val('select_val_renamed', TestModel, int, {})
 
 def test_base_model_should_construct_selector_from_select_opt():
-    assert TestModel.select_opt_empty == AttributeSelect.opt('select_opt_empty', TestModel, int, {})
-    assert TestModel.select_opt_name == AttributeSelect.opt('select_opt_renamed', TestModel, int, {})
+    assert TestModel.select_opt_empty == PropSelect.opt('select_opt_empty', TestModel, int, {})
+    assert TestModel.select_opt_name == PropSelect.opt('select_opt_renamed', TestModel, int, {})
 
 def test_base_model_should_construct_selector_from_select_arr():
-    assert TestModel.select_arr_empty == AttributeSelect.arr('select_arr_empty', TestModel, int, {})
-    assert TestModel.select_arr_name == AttributeSelect.arr('select_arr_renamed', TestModel, int, {})
+    assert TestModel.select_arr_empty == PropSelect.arr('select_arr_empty', TestModel, int, {})
+    assert TestModel.select_arr_name == PropSelect.arr('select_arr_renamed', TestModel, int, {})
 
 def test_base_model_should_construct_selector_from_select_opt_arr():
-    assert TestModel.select_opt_arr_empty == AttributeSelect.opt_arr('select_opt_arr_empty', TestModel, int, {})
-    assert TestModel.select_opt_arr_name == AttributeSelect.opt_arr('select_opt_arr_renamed', TestModel, int, {})
+    assert TestModel.select_opt_arr_empty == PropSelect.opt_arr('select_opt_arr_empty', TestModel, int, {})
+    assert TestModel.select_opt_arr_name == PropSelect.opt_arr('select_opt_arr_renamed', TestModel, int, {})
 
 def test_base_model_should_accept_valid_argument_types():
     model_value = TestModel(
@@ -471,7 +471,7 @@ def test_base_model_as_mapping_full_should_be_reversable():
         ),
     )
 
-    dict_value = model_value.as_mapping_full
+    dict_value = model_value.as_mapping_full()
 
     model_value_2 = TestModel(**dict_value)
 
@@ -481,14 +481,13 @@ class ModelWithData(BaseModel):
     property: SelectOpt['ModelWithData', int] = select(data_1='hello', data_2=2, data_3=False)
 
 def test_select_proxy_should_propagate_data_to_base_model_selectors():
-    match ModelWithData.property:
-        case PropOpt(_label='property', _target=str, _data=data):
-            assert len(data) == 3
-            assert data['data_1'] == 'hello'
-            assert data['data_2'] == 2
-            assert data['data_3'] == False
-        case other:
-            pytest.fail(f'Did not match expected selector: {other}')
+    if isinstance(ModelWithData.property, PropOpt) and ModelWithData.property.target is int:
+        assert len(ModelWithData.property.data) == 3
+        assert ModelWithData.property.data['data_1'] == 'hello'
+        assert ModelWithData.property.data['data_2'] == 2
+        assert ModelWithData.property.data['data_3'] == False
+    else:
+        pytest.fail(f'Did not match expected selector: {ModelWithData.property}')
 
 def test_base_model_select_parts_should_generate_partial_model_from_selectors():
     model_value = TestModel(
@@ -515,7 +514,7 @@ def test_base_model_select_parts_should_generate_partial_model_from_selectors():
         TestModel.other(Other.another)(Another.value),
     )
 
-    assert partial_model.as_mapping_full == {
+    assert partial_model.as_mapping_full() == {
         'select_arr_empty': [1,2,3],
         'other': {
             'value': True,

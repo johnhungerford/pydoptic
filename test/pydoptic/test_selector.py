@@ -69,6 +69,188 @@ def test_selector_should_clear_value_as_far_up_the_chain_as_possible():
     assert selector.get(model_1).value is None
     assert model_1.nested.nested is not None # type: ignore
 
+def test_selector_should_set_safe_and_unsafe_from_partial_model():
+    sel = M1.a(M2.b)(M3.c)(M4.d)
+
+    value_1 = M1.partial(a=M2.partial(b=M3.partial(c=M4.partial(d=23))))
+    assert sel.get_safe(value_1).value == 23
+    sel.set_unsafe(value_1, 1)
+    assert sel.get_safe(value_1).value == 1
+    sel.set_safe(value_1, 2)
+    assert sel.get_safe(value_1).value == 2
+
+    value_2 = M1.partial(a=M2.partial(b=M3.partial()))
+    assert sel.get_safe(value_2).value is None
+    with pytest.raises(ValueError):
+        sel.set_unsafe(value_2, 1)
+    assert sel.get_safe(value_2).value is None
+    sel.set_safe(value_2, 2)
+    assert sel.get_safe(value_2).value is None
+
+def test_selector_should_set_safe_and_unsafe_from_dict():
+    sel = M1.a(M2.b)(M3.c)(M4.d)
+
+    value_1 = M1.partial(a=M2.partial(b=M3.partial(c=M4.partial(d=23))))
+    assert sel.get_safe(value_1).value == 23
+    sel.set_unsafe(value_1, 1)
+    assert sel.get_safe(value_1).value == 1
+    sel.set_safe(value_1, 2)
+    assert sel.get_safe(value_1).value == 2
+
+    value_2 = M1.partial(a=M2.partial(b=M3.partial()))
+    assert sel.get_safe(value_2).value is None
+    with pytest.raises(ValueError):
+        sel.set_unsafe(value_2, 1)
+    assert sel.get_safe(value_2).value is None
+    sel.set_safe(value_2, 2)
+    assert sel.get_safe(value_2).value is None
+
+def test_selector_should_update_safe_and_unsafe_from_partial_model():
+    sel = M1.a(M2.b)(M3.c)(M4.d)
+
+    value_1 = {'a': {'b': {'c': {'d': 23}}}}
+    assert sel.get_safe(value_1).value == 23
+    sel.update_unsafe(value_1, lambda i: i + 1)
+    assert sel.get_safe(value_1).value == 24
+    sel.update_safe(value_1, lambda i: i + 1)
+    assert sel.get_safe(value_1).value == 25
+
+    value_2: dict = {'a': {'b': {}}}
+    assert sel.get_safe(value_2).value is None
+    with pytest.raises(ValueError):
+        sel.update_unsafe(value_2, lambda i: i + 1)
+    assert sel.get_safe(value_2).value is None
+    sel.update_safe(value_1, lambda i: i + 1)
+    assert sel.get_safe(value_2).value is None
+
+def test_selector_should_update_safe_and_unsafe_from_dict():
+    sel = M1.a(M2.b)(M3.c)(M4.d)
+
+    value_1 = {'a': {'b': {'c': {'d': 23}}}}
+    assert sel.get_safe(value_1).value == 23
+    sel.update_unsafe(value_1, lambda i: i + 1)
+    assert sel.get_safe(value_1).value == 24
+    sel.update_safe(value_1, lambda i: i + 1)
+    assert sel.get_safe(value_1).value == 25
+
+    value_2: dict = {'a': {'b': {}}}
+    assert sel.get_safe(value_2).value is None
+    with pytest.raises(ValueError):
+        sel.update_unsafe(value_2, lambda i: i + 1)
+    assert sel.get_safe(value_2).value is None
+    sel.update_safe(value_1, lambda i: i + 1)
+    assert sel.get_safe(value_2).value is None
+
+class Z(BaseModel):
+    d: Prop['Z', int]
+
+class Y(BaseModel):
+    c: PropOpt['Y', Z]
+
+class X(BaseModel):
+    b: Prop['X', Y]
+
+class W(BaseModel):
+    a: Prop['W', X]
+
+def test_selector_should_clear_safe_on_a_partial_model():
+    sel_valid = W.a(X.b)(Y.c)(Z.d)
+    sel_invalid = W.a(X.b)
+
+    value_1 = W.partial(a=X.partial(b=Y.partial(c=Z.partial(d=23))))
+    assert sel_valid.get_safe(value_1).value == 23
+    sel_valid.clear_safe(value_1)
+    assert value_1.a.b.c.d is None
+
+    value_2 = W.partial(a=X.partial(b=Y.partial(c=Z.partial(d=23))))
+    assert sel_valid.get_safe(value_2).value == 23
+    sel_valid.clear_safe_strict(value_2)
+    assert value_2.a.b.c is None
+
+    value_3 = W.partial(a=X.partial(b=Y.partial(c=Z.partial(d=23))))
+    assert sel_invalid.get_safe(value_3).value is not None
+    sel_invalid.clear_safe(value_3)
+    assert value_3.a.b is None
+
+    value_4 = W.partial(a=X.partial(b=Y.partial(c=Z.partial(d=23))))
+    assert sel_invalid.get_safe(value_4).value is not None
+    sel_invalid.clear_safe_strict(value_4) # shouldn't throw
+    assert value_4.a.b is not None
+
+def test_selector_should_clear_safe_on_a_dict():
+    sel_valid = W.a(X.b)(Y.c)(Z.d)
+    sel_invalid = W.a(X.b)
+
+    value_1 = {'a': {'b': {'c': {'d': 23}}}}
+    assert sel_valid.get_safe(value_1).value == 23
+    sel_valid.clear_safe(value_1)
+    assert value_1['a']['b']['c'].get('d') is None
+
+    value_2 = {'a': {'b': {'c': {'d': 23}}}}
+    assert sel_valid.get_safe(value_2).value == 23
+    sel_valid.clear_safe_strict(value_2)
+    assert value_2['a']['b'].get('c') is None
+
+    value_3 = {'a': {'b': {'c': {'d': 23}}}}
+    assert sel_invalid.get_safe(value_3).value is not None
+    sel_invalid.clear_safe(value_3)
+    assert value_3['a'].get('b') is None
+
+    value_4 = {'a': {'b': {'c': {'d': 23}}}}
+    assert sel_invalid.get_safe(value_4).value is not None
+    sel_invalid.clear_safe_strict(value_4) # shouldn't throw
+    assert value_4['a']['b'] is not None
+
+def test_selector_should_clear_unsafe_on_a_partial_model():
+    sel_valid = W.a(X.b)(Y.c)(Z.d)
+    sel_invalid = W.a(X.b)
+
+    value_1 = W.partial(a=X.partial(b=Y.partial(c=Z.partial(d=23))))
+    assert sel_valid.get_safe(value_1).value == 23
+    sel_valid.clear_unsafe(value_1)
+    assert value_1.a.b.c.d is None
+
+    value_2 = W.partial(a=X.partial(b=Y.partial(c=Z.partial(d=23))))
+    assert sel_valid.get_safe(value_2).value == 23
+    sel_valid.clear_unsafe_strict(value_2)
+    assert value_2.a.b.c is None
+
+    value_3 = W.partial(a=X.partial(b=Y.partial(c=Z.partial(d=23))))
+    assert sel_invalid.get_safe(value_3).value is not None
+    sel_invalid.clear_unsafe(value_3)
+    assert value_3.a.b is None
+
+    value_4 = W.partial(a=X.partial(b=Y.partial(c=Z.partial(d=23))))
+    assert sel_invalid.get_safe(value_4).value is not None
+    with pytest.raises(ValueError):
+        sel_invalid.clear_unsafe_strict(value_4)
+    assert value_4.a.b is not None
+
+def test_selector_should_clear_unsafe_on_a_dict():
+    sel_valid = W.a(X.b)(Y.c)(Z.d)
+    sel_invalid = W.a(X.b)
+
+    value_1 = {'a': {'b': {'c': {'d': 23}}}}
+    assert sel_valid.get_safe(value_1).value == 23
+    sel_valid.clear_unsafe(value_1)
+    assert value_1['a']['b']['c'].get('d') is None
+
+    value_2 = {'a': {'b': {'c': {'d': 23}}}}
+    assert sel_valid.get_safe(value_2).value == 23
+    sel_valid.clear_unsafe_strict(value_2)
+    assert value_2['a']['b'].get('c') is None
+
+    value_3 = {'a': {'b': {'c': {'d': 23}}}}
+    assert sel_invalid.get_safe(value_3).value is not None
+    sel_invalid.clear_unsafe(value_3)
+    assert value_3['a'].get('b') is None
+
+    value_4 = {'a': {'b': {'c': {'d': 23}}}}
+    assert sel_invalid.get_safe(value_4).value is not None
+    with pytest.raises(ValueError):
+        sel_invalid.clear_unsafe_strict(value_4)
+    assert value_4['a']['b'] is not None
+
 class ValModel(BaseModel):
     nested: Prop['ValModel', 'ValNested']
 
@@ -161,7 +343,7 @@ class OptArrNested3(BaseModel):
     value: PropOptArr['OptArrNested3', int]
 
 def test_opt_arr_selector_should_get_value():
-    selector_1 = OptArrModel.nested.then_val(OptArrNested.nested).then_opt(OptArrNested2.nested).then_opt_arr(OptArrNested3.value)
+    selector_1 = OptArrModel.nested.then(OptArrNested.nested).then(OptArrNested2.nested).then(OptArrNested3.value)
     selector_2 = OptArrModel.nested.then(OptArrNested.nested).then(OptArrNested2.nested).then(OptArrNested3.value)
 
     model_1 = OptArrModel(nested=[OptArrNested(nested=OptArrNested2(nested=OptArrNested3(value=[1,2,3])))])
@@ -415,7 +597,7 @@ class OA1(BaseModel):
     a: Prop['OA1', OA2]
 
 def test_opt_arr_selector_should_get_val_from_model():
-    sel = OA1.a.then_opt(OA2.b).then_opt_arr(OA3.c).then_arr(OA4.d)
+    sel = OA1.a.then_opt(OA2.b).then_opt_arr(OA3.c).then(OA4.d)
 
     # Model with all params
     value_1 = OA1(a=OA2(b=OA3(c=[OA4(d=[23])])))
@@ -438,7 +620,7 @@ def test_opt_arr_selector_should_get_val_from_model():
     assert res_4 is None
 
 def test_opt_arr_selector_should_get_val_safe_and_unsafe_from_partial_model():
-    sel = OA1.a.then_opt(OA2.b).then_opt_arr(OA3.c).then_arr(OA4.d)
+    sel = OA1.a.then_opt(OA2.b).then_opt_arr(OA3.c).then(OA4.d)
 
     # Model with all params
     value_1 = OA1.partial(a=OA2(b=OA3.partial(c=[OA4(d=[23])])))
@@ -476,7 +658,7 @@ def test_opt_arr_selector_should_get_val_safe_and_unsafe_from_partial_model():
     assert res_5 is None
 
 def test_opt_arr_selector_should_get_val_safe_and_unsafe_from_dict():
-    sel = OA1.a.then_opt(OA2.b).then_opt_arr(OA3.c).then_arr(OA4.d)
+    sel = OA1.a.then_opt(OA2.b).then_opt_arr(OA3.c).then(OA4.d)
 
     # Model with all params
     value_1 = {'a': {'b': {'c': [{'d': [23]}]}}}

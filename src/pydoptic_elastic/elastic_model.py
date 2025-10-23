@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Any, ClassVar, Dict, Optional, TypeVar, TypedDict, Unpack, cast
 
 from pydoptic import BaseModel, select
-from pydoptic.selector import AttributeSelect, LinkedSelect, Select
+from pydoptic.selector import PropSelect, LinkedSelect, Select
 
 class ESFieldData(TypedDict):
     mapping: Optional['ESMapping']
@@ -22,8 +22,8 @@ class ESMapping(Enum):
     @classmethod
     def from_select(self, prop: Select[Any, Any]) -> 'ESMapping':
         match prop:
-            case AttributeSelect():
-                data = cast(ESFieldData, prop._data)
+            case PropSelect():
+                data = cast(ESFieldData, prop.data)
                 mapping = data.get('mapping')
                 if mapping is not None:
                     return mapping
@@ -74,9 +74,9 @@ class ElasticModel(BaseModel):
         mappings: Dict[str, Any] = {}
         for prop in cls.selectors().values():
             if issubclass(prop.target, ElasticModel):
-                mappings[prop._label] = {'type': 'object', 'properties': prop.target._get_mappings()}
+                mappings[prop.label] = {'type': 'object', 'properties': prop.target._get_mappings()}
             else:
-                mappings[prop._label] = ESMapping.from_select(prop).to_dict()
+                mappings[prop.label] = ESMapping.from_select(prop).to_dict()
         return mappings
 
 M = TypeVar('M', bound=ElasticModel)

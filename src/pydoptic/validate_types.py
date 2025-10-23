@@ -17,15 +17,12 @@ def unwrap(value: A | None) -> A:
 
 
 def decompose_optional_type(typ: Type[Any]) -> Type[Any] | None:
-    """Returns whether the type was optional and the "inner" type assuming it's not None (or the original type)."""
     if get_origin(typ) is Union and NoneType in (typ_args := get_args(typ)):
         if len(typ_args) == 2:
             typ = next(iter(a for a in typ_args if a is not NoneType))
         else:
             typ = Union[tuple([a for a in typ_args if a is not NoneType])]  # type: ignore[assignment]
-
         return typ
-
     return None
 
 def decompose_list_type(typ: Type[Any]) -> Type[Any] | None:
