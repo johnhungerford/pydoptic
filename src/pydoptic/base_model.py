@@ -1,5 +1,5 @@
 from __future__ import annotations
-from pydoptic.selector import Select, PropSelect, SelectVal, SelectOpt, SelectArr, SelectOptArr, Selectable, SelectValue, A, B
+from pydoptic.selector import Discrim, Prop, Select, PropSelect, SelectVal, SelectOpt, SelectArr, SelectOptArr, ModelLike, SelectValue, A, B, Selectable
 
 from dataclasses import dataclass
 from inspect import isclass
@@ -54,21 +54,21 @@ class BaseModelMeta(type):
     def __getattribute__(cls, name_to_get: str):
         if cls is not BaseModel:
             try:
-                _selectors: Dict[Type[Any], Dict[str, PropSelect[Any, Any]]] = type.__getattribute__(cls, '_selectors')
+                global_properties: Dict[Type[Any], Dict[str, PropSelect[Any, Any] | Discrim[Any, Any]]] = type.__getattribute__(BaseModel, '_properties')
             except AttributeError:
-                _selectors = {}
-                setattr(cls, '_selectors', {})
+                global_properties = {}
+                setattr(BaseModel, '_properties', {})
 
-            if cls not in _selectors:
-                selectors: Dict[str, PropSelect[Any, Any]] = {}
-                _selectors[cls] = selectors
+            if cls not in global_properties:
+                properties: Dict[str, PropSelect[Any, Any] | Discrim[Any, Any]] = {}
+                global_properties[cls] = properties
 
                 cls_name = cls.__name__
                 type_hints = get_type_hints(cls, include_extras=True)
                 for name, _type in type_hints.items():
                     origin = get_origin(_type)
                     type_params = get_args(_type)
-                    if isclass(origin) and issubclass(origin, Select):
+                    if isclass(origin) and issubclass(origin, PropSelect):
                         assert len(type_params) > 1, f'Selector {name} on model {cls_name} is missing one or more of the three required type paramaters: {_type}'
                         assert len(type_params) == 2, f'Selector {name} on model {cls_name} has more than three type paramaters: {_type}'
                         assert issubclass(cls, type_params[0]), f'Selector {name} on model {cls_name} selects from {type_params[0]} instead of {cls_name}: {_type}'
@@ -77,17 +77,45 @@ class BaseModelMeta(type):
                             given_selector: Any = getattr(cls, name)
                             if given_selector is not None:
                                 if isinstance(given_selector, SelectProxy):
-                                    selector = _selector_from_select_proxy(name, origin, cls, target, given_selector)
+                                    if given_selector.name is not None and given_selector.name != name:
+                                        if given_selector.name in type_hints:
+                                            attr_typ = type_hints[given_selector.name]
+                                            if not isclass(attr_typ) and issubclass(attr_typ, target):
+                                                raise ValueError(f'Attribute {given_selector.name} with type {attr_typ.__name__} does not correspond to property {name} with type {target}')
+                                    property = _selector_from_select_proxy(name, origin, cls, target, given_selector)
                                 elif isinstance(given_selector, PropSelect):
-                                    selector = given_selector
+                                    property = given_selector
                                 else:
                                     raise ValueError(f'Invalid selector assigned to {name}: {given_selector}')
                             else:
                                 raise ValueError(f'To configure a selector on {cls_name} use select(), select_opt(), select_arr(), or select_arr()')
                         else:
-                            selector = _selector_from_select_proxy(name, origin, cls, target, SelectProxy(None, {}))
-                        setattr(cls, name, selector)
-                        selectors[selector.label] = selector
+                            property = _selector_from_select_proxy(name, origin, cls, target, SelectProxy(None, {}))
+                        setattr(cls, name, property)
+                        properties[property.label] = property
+                    elif isclass(origin) and issubclass(origin, Discrim):
+                        assert len(type_params) > 1, f'Discriminator {name} on model {cls_name} is missing one or more of the three required type paramaters: {_type}'
+                        assert len(type_params) == 2, f'Discriminator {name} on model {cls_name} has more than three type paramaters: {_type}'
+                        assert issubclass(cls, type_params[0]), f'Selector {name} on model {cls_name} selects from {type_params[0]} instead of {cls_name}: {_type}'
+                        super_class = type_params[0]
+                        target = type_params[1]
+                        if hasattr(cls, name):
+                            given_selector = getattr(cls, name)
+                            if given_selector is not None:
+                                if isinstance(given_selector, SelectProxy):
+                                    prop = _selector_from_select_proxy(name, Prop, cls, str, given_selector)
+                                    discrim = Discrim(super_class, target, prop, target.__name__)
+                                elif isinstance(given_selector, Discrim):
+                                    discrim = given_selector
+                                else:
+                                    raise ValueError(f'Invalid selector assigned to {name}: {given_selector}')
+                            else:
+                                raise ValueError(f'To configure a selector on {cls_name} use select(), select_opt(), select_arr(), or select_arr()')
+                        else:
+                            prop = _selector_from_select_proxy(name, Prop, cls, str, SelectProxy(None, {}))
+                            discrim = Discrim(super_class, target, prop, target.__name__)
+                        setattr(cls, name, discrim)
+                        properties[discrim.property.label] = discrim
 
         return type.__getattribute__(cls, name_to_get)
 
@@ -104,7 +132,7 @@ def _fully_validate(target: Type[M], value: Any, validators: Dict[Type[Any], Val
         print(f'{target}, {target.__name__}, {value}')
         raise ValueError(f'expected type {target.__name__} (or dict) but received: {type(value).__name__}.')
 
-class BaseModel(Selectable, metaclass=BaseModelMeta):
+class BaseModel(ModelLike, metaclass=BaseModelMeta):
     """
     Base type for a Pydoptic model.
 
@@ -116,18 +144,18 @@ class BaseModel(Selectable, metaclass=BaseModelMeta):
 
     Can include class attribute `validators` to specify how certain types should be validated.
     """
-    _selectors: Dict[Type[Any], Dict[str, PropSelect[Any, Any]]]
+    _properties: Dict[Type[Any], Dict[str, PropSelect[Any, Any] | Discrim[Any, Any]]]
     validators: Dict[Type[Any], Validator]
     """
-    Table for looking up validation functions by type
+    Table for looking up validation functions by type.
     """
 
     @classmethod
-    def selectors(cls) -> Dict[str, PropSelect[Self, Any]]:
+    def properties(cls) -> Dict[str, PropSelect[Any, Any] | Discrim[Any, Any]]:
         """
         All the selectors for this subclass
         """
-        return cls._selectors[cls]
+        return BaseModel._properties[cls]
 
     @classmethod
     def partial(cls, **kwargs) -> PartialModel[Self]:
@@ -173,55 +201,68 @@ class BaseModel(Selectable, metaclass=BaseModelMeta):
         if '_validators' in kwargs:
             validators.update(kwargs['_validators'])
             del kwargs['_validators']
-        for selector in self.__class__.selectors().values():
-            if selector.label not in kwargs and not selector.is_opt:
-                raise ValueError(f'Missing required parameter {selector.label}')
-            if selector.label not in kwargs:
-                setattr(self, selector.label, None)
+        for selector in self.__class__.properties().values():
+            if isinstance(selector, Discrim):
+                if selector.property.label in kwargs and kwargs[selector.property.label] != selector.value:
+                    raise ValueError(f'Discriminator {selector.property.label} set to illegal value: {kwargs[selector.property.label]}. Must be {selector.value} (will be set automatically if omitted).')
+                setattr(self, selector.property.label, selector.value)
             else:
-                value = kwargs[selector.label]
-                del kwargs[selector.label]
-                if value is None and not selector.is_opt:
-                    raise ValueError(f'Received empty value for required parameter {selector.label}')
-                if value is None:
+                if selector.label not in kwargs and not selector.is_opt:
+                    raise ValueError(f'Missing required parameter {selector.label}')
+                if selector.label not in kwargs:
                     setattr(self, selector.label, None)
                 else:
-                    if isclass(selector.target) and issubclass(selector.target, BaseModel):
-                        if selector.is_arr:
-                            if not isinstance(value, list):
-                                raise ValueError(f'Received non-array value for array field {selector.label}')
-                            updated_values = []
-                            for i, v in enumerate(value):
-                                try:
-                                    updated_values.append(_fully_validate(selector.target, v, validators))
-                                except ValueError as ve:
-                                    raise ValueError(f'Property {selector.label} contains invalid element at index {i}: {ve}')
-                            setattr(self, selector.label, updated_values)
-                        else:
-                            try:
-                                print(selector.target)
-                                valid_value = _fully_validate(selector.target, value, validators)
-                                setattr(self, selector.label, valid_value)
-                            except ValueError as ve:
-                                raise ValueError(f'Invalid property {selector.label}: {ve}')            
+                    value = kwargs[selector.label]
+                    del kwargs[selector.label]
+                    if value is None and not selector.is_opt:
+                        raise ValueError(f'Received empty value for required parameter {selector.label}')
+                    if value is None:
+                        setattr(self, selector.label, None)
                     else:
-                        error_message = validate_type(selector.is_opt, selector.is_arr, selector.target, value, validators)
-                        if error_message is not None:
-                            message = f'Invalid property {selector.label}: {error_message}'
-                            raise ValueError(message)
-                        setattr(self, selector.label, value)
+                        if isclass(selector.target) and issubclass(selector.target, BaseModel):
+                            if selector.is_arr:
+                                if not isinstance(value, list):
+                                    raise ValueError(f'Received non-array value for array field {selector.label}')
+                                updated_values = []
+                                for i, v in enumerate(value):
+                                    try:
+                                        updated_values.append(_fully_validate(selector.target, v, validators))
+                                    except ValueError as ve:
+                                        raise ValueError(f'Property {selector.label} contains invalid element at index {i}: {ve}')
+                                setattr(self, selector.label, updated_values)
+                            else:
+                                try:
+                                    print(selector.target)
+                                    valid_value = _fully_validate(selector.target, value, validators)
+                                    setattr(self, selector.label, valid_value)
+                                except ValueError as ve:
+                                    raise ValueError(f'Invalid property {selector.label}: {ve}')            
+                        else:
+                            error_message = validate_type(selector.is_opt, selector.is_arr, selector.target, value, validators)
+                            if error_message is not None:
+                                message = f'Invalid property {selector.label}: {error_message}'
+                                raise ValueError(message)
+                            setattr(self, selector.label, value)
 
         if not allow_extra_args:
             for k, v in kwargs.items():
-                if k not in self.__class__.selectors():
+                if k not in self.__class__.properties():
                     raise ValueError(f'Unrecognized parameter {k} provided (value: {v})')
 
     def __repr__(self):
         return self.__class__.__name__ + '(' + ', '.join(f'{k}={v}' for k, v in self.as_mapping().items()) + ')'
 
+    def __setattr__(self, name: str, value):
+        if name in self.properties():
+            prop = self.properties()[name]
+            if isinstance(prop, Discrim) and value != prop.value:
+                raise AttributeError(f'Setting discriminator value is forbidden')
+        
+        super().__setattr__(name, value)
+
     def as_mapping(self) -> Mapping[str, Any]:
         mapping: Dict[str, Any] = {}
-        for name in self.__class__.selectors().keys():
+        for name in self.__class__.properties().keys():
             try:
                 value = getattr(self, name)
                 mapping[name] = value
@@ -231,10 +272,10 @@ class BaseModel(Selectable, metaclass=BaseModelMeta):
 
     def as_mapping_full(self) -> Mapping[str, Any]:
         mapping: Dict[str, Any] = {}
-        for name in self.__class__.selectors().keys():
+        for name in self.__class__.properties().keys():
             try:
                 value = getattr(self, name)
-                if isinstance(value, Selectable):
+                if isinstance(value, ModelLike):
                     mapping[name] = value.as_mapping_full()
                 else:
                     mapping[name] = value
@@ -266,7 +307,7 @@ def _partly_validate(target: Type[M], value: Any, validators: Dict[Type[Any], Va
 
 M = TypeVar('M', bound=BaseModel)
 
-class PartialModel(Generic[M], Selectable):
+class PartialModel(Generic[M], Selectable[M]):
     """
     An incomplete version of model instances. Validates data without requiring that all required properties are present.
     """
@@ -293,37 +334,50 @@ class PartialModel(Generic[M], Selectable):
         """
         object.__setattr__(self, '_dict', {})
         object.__setattr__(self, 'model', model)
+        allow_extra_args = kwargs.get('_allow_extra_args', False)
+        if '_allow_extra_args' in kwargs:
+            del kwargs['_allow_extra_args']
         validators = getattr(model, 'validators', {})
-        if '__validators' in kwargs:
-            validators.update(kwargs['__validators'])
-            del kwargs['__validators']
-        for selector in model.selectors().values():
-            if selector.label in kwargs:
-                value = kwargs[selector.label]
-                if value is not None:
-                    if isclass(selector.target) and issubclass(selector.target, BaseModel):
-                        if selector.is_arr:
-                            if not isinstance(value, list):
-                                raise ValueError(f'Received non-array value for array field {selector.label}')
-                            updated_values = []
-                            for i, v in enumerate(value):
+        if '_validators' in kwargs:
+            validators.update(kwargs['_validators'])
+            del kwargs['_validators']
+        for selector in model.properties().values():
+            if isinstance(selector, Discrim):
+                if selector.property.label in kwargs and kwargs[selector.property.label] != selector.value:
+                    raise ValueError(f'Discriminator {selector.property.label} set to illegal value: {kwargs[selector.property.label]}. Must be {selector.value} (will be set automatically if omitted).')
+                setattr(self, selector.property.label, selector.value)
+            else:
+                if selector.label in kwargs:
+                    value = kwargs[selector.label]
+                    if value is not None:
+                        if isclass(selector.target) and issubclass(selector.target, BaseModel):
+                            if selector.is_arr:
+                                if not isinstance(value, list):
+                                    raise ValueError(f'Received non-array value for array field {selector.label}')
+                                updated_values = []
+                                for i, v in enumerate(value):
+                                    try:
+                                        updated_values.append(_partly_validate(selector.target, v, validators))
+                                    except ValueError as ve:
+                                        raise ValueError(f'Property {selector.label} contains invalid element at index {i}: {ve}')
+                                self._dict[selector.label] = updated_values
+                            else:
                                 try:
-                                    updated_values.append(_partly_validate(selector.target, v, validators))
+                                    valid_value = _partly_validate(selector.target, value, validators)
+                                    self._dict[selector.label] = valid_value
                                 except ValueError as ve:
-                                    raise ValueError(f'Property {selector.label} contains invalid element at index {i}: {ve}')
-                            self._dict[selector.label] = updated_values
+                                    raise ValueError(f'Invalid property {selector.label}: {ve}')            
                         else:
-                            try:
-                                valid_value = _partly_validate(selector.target, value, validators)
-                                self._dict[selector.label] = valid_value
-                            except ValueError as ve:
-                                raise ValueError(f'Invalid property {selector.label}: {ve}')            
-                    else:
-                        error_message = validate_type(selector.is_opt, selector.is_arr, selector.target, value, validators)
-                        if error_message is not None:
-                            message = f'Invalid property {selector.label}: {error_message}'
-                            raise ValueError(message)
-                        self._dict[selector.label] = value
+                            error_message = validate_type(selector.is_opt, selector.is_arr, selector.target, value, validators)
+                            if error_message is not None:
+                                message = f'Invalid property {selector.label}: {error_message}'
+                                raise ValueError(message)
+                            self._dict[selector.label] = value
+
+        if not allow_extra_args:
+            for k, v in kwargs.items():
+                if k not in model.properties():
+                    raise ValueError(f'Unrecognized parameter {k} provided (value: {v})')
 
     def __repr__(self):
         return 'Partial' + self.model.__name__ + '(' + ', '.join(f'{k}={v}' for k, v in self._dict.items()) + ')'
@@ -337,6 +391,11 @@ class PartialModel(Generic[M], Selectable):
             raise AttributeError(item)
 
     def __setattr__(self, key, value):
+        if key in self.model.properties():
+            prop = self.model.properties()[key]
+            if isinstance(prop, Discrim) and value != prop.value:
+                raise AttributeError(f'Setting discriminator value is forbidden')
+        
         object.__getattribute__(self, '_dict')[key] = value
 
     def as_mapping(self) -> Mapping[str, Any]:

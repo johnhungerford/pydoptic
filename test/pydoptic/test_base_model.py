@@ -25,7 +25,7 @@ class Another(BaseModel):
     value: Prop['Another', float]
 
 def test_base_model_should_construct_selectors():
-    assert set(TestModel.selectors().keys()) == {
+    assert set(TestModel.properties().keys()) == {
         'annotation',
         'select_val_empty',
         'select_val_renamed',
@@ -38,19 +38,19 @@ def test_base_model_should_construct_selectors():
         'other',
     }
 
-    for select in TestModel.selectors().values():
+    for select in TestModel.properties().values():
         assert isinstance(select, PropSelect)
 
-    assert TestModel.selectors()['annotation'] == TestModel.annotation
-    assert TestModel.selectors()['select_val_empty'] == TestModel.select_val_empty
-    assert TestModel.selectors()['select_val_renamed'] == TestModel.select_val_name
-    assert TestModel.selectors()['select_opt_empty'] == TestModel.select_opt_empty
-    assert TestModel.selectors()['select_opt_renamed'] == TestModel.select_opt_name
-    assert TestModel.selectors()['select_arr_empty'] == TestModel.select_arr_empty
-    assert TestModel.selectors()['select_arr_renamed'] == TestModel.select_arr_name
-    assert TestModel.selectors()['select_opt_arr_empty'] == TestModel.select_opt_arr_empty
-    assert TestModel.selectors()['select_opt_arr_renamed'] == TestModel.select_opt_arr_name
-    assert TestModel.selectors()['other'] == TestModel.other
+    assert TestModel.properties()['annotation'] == TestModel.annotation
+    assert TestModel.properties()['select_val_empty'] == TestModel.select_val_empty
+    assert TestModel.properties()['select_val_renamed'] == TestModel.select_val_name
+    assert TestModel.properties()['select_opt_empty'] == TestModel.select_opt_empty
+    assert TestModel.properties()['select_opt_renamed'] == TestModel.select_opt_name
+    assert TestModel.properties()['select_arr_empty'] == TestModel.select_arr_empty
+    assert TestModel.properties()['select_arr_renamed'] == TestModel.select_arr_name
+    assert TestModel.properties()['select_opt_arr_empty'] == TestModel.select_opt_arr_empty
+    assert TestModel.properties()['select_opt_arr_renamed'] == TestModel.select_opt_arr_name
+    assert TestModel.properties()['other'] == TestModel.other
 
 def test_base_model_should_construct_selector_from_annotation_only():
     assert TestModel.annotation == PropSelect.val('annotation', TestModel, str, {})
@@ -418,10 +418,12 @@ def test_base_model_init_should_fail_if_nested_model_is_incomplete_partial_model
 
 
 class NestedModelExample(BaseModel):
-    nested_model: SelectArr['NestedModelExample', Another] = select()
+    nested_model: PropArr['NestedModelExample', Another] = select()
 
 def test_base_model_init_should_accept_valid_nested_model_array():
     nested_vals = [Another(value=2.0), {'value': 0.2}, Another.partial(value=23.042)]
+    NestedModelExample.nested_model
+    somat = get_type_hints(NestedModelExample)
     result = NestedModelExample(
         nested_model=nested_vals,
     )
@@ -478,7 +480,7 @@ def test_base_model_as_mapping_full_should_be_reversable():
     assert model_value == model_value_2
 
 class ModelWithData(BaseModel):
-    property: SelectOpt['ModelWithData', int] = select(data_1='hello', data_2=2, data_3=False)
+    property: PropOpt['ModelWithData', int] = select(data_1='hello', data_2=2, data_3=False)
 
 def test_select_proxy_should_propagate_data_to_base_model_selectors():
     if isinstance(ModelWithData.property, PropOpt) and ModelWithData.property.target is int:
@@ -549,3 +551,50 @@ def test_base_model_properties_should_be_inherited_from_parent():
     # Parent selector should work on child
     assert Parent.prop_1.get_val(valid_model) == 1
     assert Child.prop_2.get_val(valid_model) == 2
+
+
+class Base(BaseModel):
+    v: Prop['Base', str]
+
+class Sub1(Base):
+    d: Discrim[Base, 'Sub1']
+    s1v: Prop['Sub1', int]
+
+class Sub2(Base):
+    d: Discrim[Base, 'Sub2']
+    s2v: Prop['Sub2', bool]
+
+class Root(BaseModel):
+    next: Prop['Root', Base]
+
+def test_base_model_should_construct_with_discrim():
+    value_1 = Root(next=Sub1(v='1', s1v=23))
+    value_2 = Root(next=Sub2(v='2', s2v=True))
+
+    assert value_1.next.d == 'Sub1' # type: ignore
+    assert value_2.next.d == 'Sub2' # type: ignore
+
+def test_base_model_should_forbid_constructing_with_invalid_discrim():
+    value = Root(next=Sub1(d='Sub1', v='1', s1v=23))
+    assert value.next.d == 'Sub1' # type: ignore
+
+    with pytest.raises(ValueError):
+        Root(next=Sub2(d='wrong!', v='2', s2v=True))
+
+def test_base_model_should_forbid_setting_invalid_discrim():
+    value = Root(next=Sub1(d='Sub1', v='1', s1v=23))
+    assert value.next.d == 'Sub1' # type: ignore
+
+    with pytest.raises(AttributeError):
+        value.next.d = 'wrong!'  # type: ignore[attr-defined]
+
+class BiModel(BaseModel):
+    prop_1_sel: Prop['BiModel', int] = select('prop_1')
+    prop_1: int
+    prop_2_sel: Prop['BiModel', str] = select('prop_2')
+    prop_2: str
+
+def test_base_model_should_allow_type_checked_attributes_using_aliases():    
+    value = BiModel(prop_1=23, prop_2="hi")
+    assert value.prop_1 == BiModel.prop_1_sel.get_val(value) == 23
+    assert value.prop_2 == BiModel.prop_2_sel.get_val(value) == "hi"

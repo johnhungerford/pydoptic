@@ -2,11 +2,10 @@
 from inspect import isclass
 from typing import Any, Dict, List, Type, TypeVar, cast
 
-from pydoptic.selector import Selectable
+from pydoptic.selector import ModelLike
 
 from types import NoneType
 from typing import Type, Annotated, Any, Tuple, get_origin, get_args, Union, Optional, Callable
-import pydantic
 
 A = TypeVar('A')
 

@@ -1,7 +1,7 @@
 import pytest
 from pydoptic.base_model import BaseModel
 
-from pydoptic.selector import PropArr, PropOpt, PropOptArr, Prop
+from pydoptic.selector import Discrim, PropArr, PropOpt, PropOptArr, Prop
 
 class Model(BaseModel):
     nested: PropOpt['Model', 'Nested']
@@ -9,20 +9,26 @@ class Model(BaseModel):
 class Nested(BaseModel):
     nested: PropOpt['Nested', 'NestedNested']
 
+class N1(Nested):
+    d: Discrim['Nested', 'N1']
+
 class NestedNested(BaseModel):
     value: PropOpt['NestedNested', int]
 
 def test_selector_should_get_value():
-    selector = Model.nested(Nested.nested)(NestedNested.value)
+    selector = Model.nested(N1.d)(N1.nested)(NestedNested.value)
 
-    model_1 = Model(nested=Nested(nested=NestedNested(value=23)))
+    model_1 = Model(nested=N1(nested=NestedNested(value=23)))
     assert selector.get(model_1).value == 23
 
-    model_2 = Model(nested=Nested(nested=NestedNested()))
-    assert selector.get(model_2).value == None
+    model_2 = Model(nested=N1(nested=NestedNested()))
+    assert selector.get(model_2).value is None
 
-    model_3 = Model()
-    assert selector.get(model_3).value == None
+    model_3 = Model(nested=Nested(nested=NestedNested(value=23)))
+    assert selector.get(model_3).value is None
+
+    model_4 = Model()
+    assert selector.get(model_4).value == None
 
 def test_selector_should_set_value():
     selector = Model.nested(Nested.nested)(NestedNested.value)
@@ -145,7 +151,12 @@ class Z(BaseModel):
     d: Prop['Z', int]
 
 class Y(BaseModel):
-    c: PropOpt['Y', Z]
+    discr: Prop['Y', str]
+
+class Y1(Y):
+    c: PropOpt['Y1', Z]
+
+sel_y1: Discrim[Y, 'Y1'] = Discrim(Y, Y1, Y.discr, "Y1")
 
 class X(BaseModel):
     b: Prop['X', Y]
@@ -154,98 +165,98 @@ class W(BaseModel):
     a: Prop['W', X]
 
 def test_selector_should_clear_safe_on_a_partial_model():
-    sel_valid = W.a(X.b)(Y.c)(Z.d)
+    sel_valid = W.a(X.b)(sel_y1)(Y1.c)(Z.d)
     sel_invalid = W.a(X.b)
 
-    value_1 = W.partial(a=X.partial(b=Y.partial(c=Z.partial(d=23))))
+    value_1 = W.partial(a=X.partial(b=Y1.partial(discr="Y1", c=Z.partial(d=23))))
     assert sel_valid.get_safe(value_1).value == 23
     sel_valid.clear_safe(value_1)
     assert value_1.a.b.c.d is None
 
-    value_2 = W.partial(a=X.partial(b=Y.partial(c=Z.partial(d=23))))
+    value_2 = W.partial(a=X.partial(b=Y1.partial(discr="Y1", c=Z.partial(d=23))))
     assert sel_valid.get_safe(value_2).value == 23
     sel_valid.clear_safe_strict(value_2)
     assert value_2.a.b.c is None
 
-    value_3 = W.partial(a=X.partial(b=Y.partial(c=Z.partial(d=23))))
+    value_3 = W.partial(a=X.partial(b=Y1.partial(discr="Y1", c=Z.partial(d=23))))
     assert sel_invalid.get_safe(value_3).value is not None
     sel_invalid.clear_safe(value_3)
     assert value_3.a.b is None
 
-    value_4 = W.partial(a=X.partial(b=Y.partial(c=Z.partial(d=23))))
+    value_4 = W.partial(a=X.partial(b=Y1.partial(discr="Y1", c=Z.partial(d=23))))
     assert sel_invalid.get_safe(value_4).value is not None
     sel_invalid.clear_safe_strict(value_4) # shouldn't throw
     assert value_4.a.b is not None
 
 def test_selector_should_clear_safe_on_a_dict():
-    sel_valid = W.a(X.b)(Y.c)(Z.d)
+    sel_valid = W.a(X.b)(sel_y1)(Y1.c)(Z.d)
     sel_invalid = W.a(X.b)
 
-    value_1 = {'a': {'b': {'c': {'d': 23}}}}
+    value_1 = {'a': {'b': {'discr': 'Y1', 'c': {'d': 23}}}}
     assert sel_valid.get_safe(value_1).value == 23
     sel_valid.clear_safe(value_1)
-    assert value_1['a']['b']['c'].get('d') is None
+    assert value_1['a']['b']['c'].get('d') is None  # type: ignore[attr-defined]
 
-    value_2 = {'a': {'b': {'c': {'d': 23}}}}
+    value_2 = {'a': {'b': {'discr': 'Y1', 'c': {'d': 23}}}}
     assert sel_valid.get_safe(value_2).value == 23
     sel_valid.clear_safe_strict(value_2)
     assert value_2['a']['b'].get('c') is None
 
-    value_3 = {'a': {'b': {'c': {'d': 23}}}}
+    value_3 = {'a': {'b': {'discr': 'Y1', 'c': {'d': 23}}}}
     assert sel_invalid.get_safe(value_3).value is not None
     sel_invalid.clear_safe(value_3)
     assert value_3['a'].get('b') is None
 
-    value_4 = {'a': {'b': {'c': {'d': 23}}}}
+    value_4 = {'a': {'b': {'discr': 'Y1', 'c': {'d': 23}}}}
     assert sel_invalid.get_safe(value_4).value is not None
     sel_invalid.clear_safe_strict(value_4) # shouldn't throw
     assert value_4['a']['b'] is not None
 
 def test_selector_should_clear_unsafe_on_a_partial_model():
-    sel_valid = W.a(X.b)(Y.c)(Z.d)
+    sel_valid = W.a(X.b)(sel_y1)(Y1.c)(Z.d)
     sel_invalid = W.a(X.b)
 
-    value_1 = W.partial(a=X.partial(b=Y.partial(c=Z.partial(d=23))))
+    value_1 = W.partial(a=X.partial(b=Y1.partial(discr="Y1", c=Z.partial(d=23))))
     assert sel_valid.get_safe(value_1).value == 23
     sel_valid.clear_unsafe(value_1)
     assert value_1.a.b.c.d is None
 
-    value_2 = W.partial(a=X.partial(b=Y.partial(c=Z.partial(d=23))))
+    value_2 = W.partial(a=X.partial(b=Y1.partial(discr="Y1", c=Z.partial(d=23))))
     assert sel_valid.get_safe(value_2).value == 23
     sel_valid.clear_unsafe_strict(value_2)
     assert value_2.a.b.c is None
 
-    value_3 = W.partial(a=X.partial(b=Y.partial(c=Z.partial(d=23))))
+    value_3 = W.partial(a=X.partial(b=Y1.partial(discr="Y1", c=Z.partial(d=23))))
     assert sel_invalid.get_safe(value_3).value is not None
     sel_invalid.clear_unsafe(value_3)
     assert value_3.a.b is None
 
-    value_4 = W.partial(a=X.partial(b=Y.partial(c=Z.partial(d=23))))
+    value_4 = W.partial(a=X.partial(b=Y1.partial(discr="Y1", c=Z.partial(d=23))))
     assert sel_invalid.get_safe(value_4).value is not None
     with pytest.raises(ValueError):
         sel_invalid.clear_unsafe_strict(value_4)
     assert value_4.a.b is not None
 
 def test_selector_should_clear_unsafe_on_a_dict():
-    sel_valid = W.a(X.b)(Y.c)(Z.d)
+    sel_valid = W.a(X.b)(sel_y1)(Y1.c)(Z.d)
     sel_invalid = W.a(X.b)
 
-    value_1 = {'a': {'b': {'c': {'d': 23}}}}
+    value_1 = {'a': {'b': {'discr': 'Y1', 'c': {'d': 23}}}}
     assert sel_valid.get_safe(value_1).value == 23
     sel_valid.clear_unsafe(value_1)
-    assert value_1['a']['b']['c'].get('d') is None
+    assert value_1['a']['b']['c'].get('d') is None  # type: ignore[attr-defined]
 
-    value_2 = {'a': {'b': {'c': {'d': 23}}}}
+    value_2 = {'a': {'b': {'discr': 'Y1', 'c': {'d': 23}}}}
     assert sel_valid.get_safe(value_2).value == 23
     sel_valid.clear_unsafe_strict(value_2)
     assert value_2['a']['b'].get('c') is None
 
-    value_3 = {'a': {'b': {'c': {'d': 23}}}}
+    value_3 = {'a': {'b': {'discr': 'Y1', 'c': {'d': 23}}}}
     assert sel_invalid.get_safe(value_3).value is not None
     sel_invalid.clear_unsafe(value_3)
     assert value_3['a'].get('b') is None
 
-    value_4 = {'a': {'b': {'c': {'d': 23}}}}
+    value_4 = {'a': {'b': {'discr': 'Y1', 'c': {'d': 23}}}}
     assert sel_invalid.get_safe(value_4).value is not None
     with pytest.raises(ValueError):
         sel_invalid.clear_unsafe_strict(value_4)
@@ -631,9 +642,9 @@ def test_opt_arr_selector_should_get_val_safe_and_unsafe_from_partial_model():
 
     # Model with empty array value
     value_2 = OA1(a=OA2(b=OA3(c=[])))
-    res_2a = sel.get_val_unsafe(value_2)
+    res_2a = sel.get_val(value_2)
     assert res_2a == []
-    res_2b = sel.get_val_safe(value_2)
+    res_2b = sel.get_val(value_2)
     assert res_2b == []
 
     # Model with empty optional value

@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Any, Callable, Dict, Generic, List, Mapping, Tuple, Type, TypeVar, cast, Optional
+from inspect import isclass
+from typing import Any, Callable, Dict, Generic, List, Mapping, Set, Tuple, Type, TypeVar, cast, Optional
 
-A = TypeVar('A')
+A = TypeVar('A', contravariant=True)
 B = TypeVar('B')
 C = TypeVar('C')
 
-class Selectable:
+class ModelLike:
     """
     Base class for typed model that can be manipulated by `Select` instances
     """
@@ -25,20 +26,26 @@ class Selectable:
         """
         mapping: Dict[str, Any] = {}
         for k, v in self.as_mapping().items():
-            if isinstance(v, Selectable):
+            if isinstance(v, ModelLike):
                 mapping[k] = v.as_mapping_full()
             else:
                 mapping[k] = v
         return mapping
 
     def __eq__(self, value):
-        if isinstance(value, Selectable):
+        if isinstance(value, ModelLike):
             other_dict = value.as_mapping_full()
         elif isinstance(value, dict):
             other_dict = value
         else:
             return False
         return self.as_mapping_full() == other_dict
+    
+class Selectable(Generic[C], ModelLike):
+    """
+    Base class for a partial model
+    """
+    
 
 @dataclass(frozen=True)
 class SelectValue(Generic[A]):
@@ -137,6 +144,8 @@ class Select(Generic[A, B]):
         match next:
             case PropSelect():
                 return LinkedSelect(self, next)
+            case MatchSelect():
+                return LinkedSelect(self, next)
             case LinkedSelect(select_1=select_1, select_2=select_2):
                 return LinkedSelect(self(select_1), select_2)
             case _:
@@ -146,52 +155,72 @@ class Select(Generic[A, B]):
         match self:
             case PropSelect():
                 return hash((self.label, self.origin, self.target, self.is_arr, self.is_opt))
+            case MatchSelect():
+                raise NotImplementedError()
             case LinkedSelect(select_1=sel_1, select_2=sel_2):
                 return hash((sel_1, sel_2))
             case _:
                 raise ValueError()
 
     @cached_property
-    def attributes(self) -> List['PropSelect[Any, Any]']:
+    def properties(self) -> List['PropSelect[Any, Any]']:
         """
         All the components of the select as a list of `PropSelect`s.
         """
         match self:
             case PropSelect():
                 return [self]
+            case MatchSelect():
+                return []
             case LinkedSelect(select_1=select_1, select_2=select_2):
-                return [*(attr for attr in select_1.attributes), select_2]
+                if isinstance(select_2, PropSelect):
+                    return [*(attr for attr in select_1.properties), select_2]
+                else:
+                    return select_1.properties
             case _:
                 raise ValueError()
             
+    @cached_property
+    def segments(self) -> List['PropSelect[Any, Any]' | 'MatchSelect[Any, Any]']:
+        """
+        All the components of the select as a list of `PropSelect`s.
+        """
+        match self:
+            case PropSelect():
+                return [self]
+            case MatchSelect():
+                return [self]
+            case LinkedSelect(select_1=select_1, select_2=select_2):
+                if isinstance(select_2, PropSelect):
+                    return [*(attr for attr in select_1.segments), select_2]
+                else:
+                    return select_1.segments
+            case _:
+                raise ValueError()
+
     @property
     def path(self) -> str:
         """
         The property path of the select in the form "prop_1.prop_2.prop_3".
         """
-        return '.'.join(attr.label for attr in self.attributes)
-
-    @property
-    def target(self) -> Type[B]:
-        """
-        The target type
-        """
-        match self:
-            case PropSelect():
-                return self.target
-            case LinkedSelect(select_2=select_2):
-                return select_2.target
-            case _:
-                raise ValueError()
+        return '.'.join(attr.label for attr in self.properties)
 
     @property
     def origin(self) -> Type[A]:
         """
         The origin type
         """
-        return self.attributes[0].origin
+        raise NotImplementedError()
 
-    def get_safe(self, target: Selectable | Dict[str, Any]) -> SelectValue[B]:
+
+    @property
+    def target(self) -> Type[B]:
+        """
+        The target type
+        """
+        raise NotImplementedError()
+
+    def get_safe(self, target: Selectable[A] | Dict[str, Any]) -> SelectValue[B]:
         """
         Retrieve the selected value from potentially incomplete data. Returns an empty `SelectValue` if the value is inaccessible due to invalid data.
         """
@@ -200,14 +229,14 @@ class Select(Generic[A, B]):
         except ValueError:
             return SelectValue(None, True, False)
     
-    def get_unsafe(self, target: Selectable | Dict[str, Any]) -> SelectValue[B]:
+    def get_unsafe(self, target: Selectable[A] | Dict[str, Any]) -> SelectValue[B]:
         """
         Retrieve the selected value from potentially incomplete data. Raises `ValueError` if the value is inaccessible due to invalid data.
         """
 
         match self:
             case PropSelect():
-                if isinstance(target, Selectable):
+                if isinstance(target, ModelLike):
                     try:
                         result = getattr(target, self.label)
                     except AttributeError:
@@ -224,6 +253,8 @@ class Select(Generic[A, B]):
                 if result is not None and self.is_arr and not isinstance(result, list):
                     raise ValueError(f'Array selector returned non-array value: {result}')
                 return SelectValue(result, self.is_opt, self.is_arr)
+            case MatchSelect():
+                return self.get(target)
             case LinkedSelect(select_1=select_1, select_2=select_2):
                 result = select_1.get_unsafe(target).flat_map(lambda b: select_2.get_unsafe(b))
                 return result
@@ -237,7 +268,7 @@ class Select(Generic[A, B]):
         
         match self:
             case PropSelect():
-                if isinstance(target, Selectable):
+                if isinstance(target, ModelLike):
                     result = getattr(target, self.label)
                 elif isinstance(target, dict):
                     result = target.get(self.label)
@@ -248,13 +279,21 @@ class Select(Generic[A, B]):
                 if result is not None and self.is_arr and not isinstance(result, list):
                     raise ValueError(f'Array selector returned non-array value: {result}')
                 return SelectValue(result, self.is_opt, self.is_arr)
+            case MatchSelect():
+                if isclass(target) and issubclass(target, self.target):
+                    if self.match(target):
+                        return SelectValue(cast(B, target), True, False)
+                if isinstance(target, Selectable) or isinstance(target, dict):
+                    if self.match_partial(target):
+                        return SelectValue(cast(B, target), True, False)
+                return SelectValue(None, True, False)
             case LinkedSelect(select_1=select_1, select_2=select_2):
                 result = select_1.get(target).flat_map(lambda b: select_2.get(b))
                 return result
             case _:
                 raise ValueError()
 
-    def set_safe(self, target: Selectable | Dict[str, Any], value: B):
+    def set_safe(self, target: Selectable[A] | Dict[str, Any], value: B):
         """
         Set the selected value within potentially incomplete data. Does nothing if the value cannot be set due to invalid data.
 
@@ -269,18 +308,23 @@ class Select(Generic[A, B]):
                     updated: Any = [value for _ in list_value]
                 else:
                     updated = value
-                if isinstance(target, Selectable):
+                if isinstance(target, ModelLike):
                     setattr(target, self.label, updated)
                 elif isinstance(target, dict):
                     target[self.label] = updated
                 else:
                     return
+            case MatchSelect():
+                raise NotImplementedError('You cannot set using a match select!')
             case LinkedSelect(select_1=select_1, select_2=select_2):
-                select_1.get_safe(target).for_each(lambda b: select_2.set_safe(b, value))
+                if isinstance(select_2, MatchSelect):
+                    select_1.set_safe(target, value)
+                else:
+                    select_1.get_safe(target).for_each(lambda b: select_2.set_safe(b, value))
             case _:
                 raise ValueError()
 
-    def set_unsafe(self, target: Selectable | Dict[str, Any], value: B):
+    def set_unsafe(self, target: Selectable[A] | Dict[str, Any], value: B):
         """
         Set the selected value within potentially incomplete data. Raises `ValueError` if the value cannot be set due to invalid data.
 
@@ -295,14 +339,19 @@ class Select(Generic[A, B]):
                     updated: Any = [value for _ in list_value]
                 else:
                     updated = value
-                if isinstance(target, Selectable):
+                if isinstance(target, ModelLike):
                     setattr(target, self.label, updated)
                 elif isinstance(target, dict):
                     target[self.label] = updated
                 else:
                     raise ValueError(f'Value must be model or dict')
+            case MatchSelect():
+                raise NotImplementedError('You cannot set using a match select!')
             case LinkedSelect(select_1=select_1, select_2=select_2):
-                select_1.get_unsafe(target).for_each(lambda b: select_2.set_unsafe(b, value))
+                if isinstance(select_2, MatchSelect):
+                    select_1.set_unsafe(target, value)
+                else:
+                    select_1.get_unsafe(target).for_each(lambda b: select_2.set_unsafe(b, value))
             case _:
                 raise ValueError()
 
@@ -321,16 +370,21 @@ class Select(Generic[A, B]):
                     updated: Any = [value for _ in list_value]
                 else:
                     updated = value
-                if isinstance(target, Selectable):
+                if isinstance(target, ModelLike):
                     setattr(target, self.label, updated)
                 else:
                     raise ValueError(f'Value must be model')
+            case MatchSelect():
+                raise NotImplementedError('You cannot set using a match select!')
             case LinkedSelect(select_1=select_1, select_2=select_2):
-                select_1.get(target).for_each(lambda b: select_2.set(b, value))
+                if isinstance(select_2, MatchSelect):
+                    select_1.set(target, value)
+                else:
+                    select_1.get(target).for_each(lambda b: select_2.set(b, value))
             case _:
                 raise ValueError()
 
-    def update_safe(self, target: Selectable | Dict[str, Any], fn: Callable[[B], B]):
+    def update_safe(self, target: Selectable[A] | Dict[str, Any], fn: Callable[[B], B]):
         """
         Update any and every selected element within potentially incomplete data. Does nothing if the value cannot be set due to invalid data.
 
@@ -342,18 +396,23 @@ class Select(Generic[A, B]):
             case PropSelect():
                 select_value = self.get_safe(target)
                 updated = select_value.map(fn)
-                if isinstance(target, Selectable):
+                if isinstance(target, ModelLike):
                     setattr(target, self.label, updated.value)
                 elif isinstance(target, dict):
                     target[self.label] = updated.value
                 else:
                     return
+            case MatchSelect():
+                raise NotImplementedError('You cannot set using a match select!')
             case LinkedSelect(select_1=select_1, select_2=select_2):
-                select_1.get_safe(target).for_each(lambda b: select_2.update_safe(b, fn))
+                if isinstance(select_2, MatchSelect):
+                    select_1.update_safe(target, fn)
+                else:
+                    select_1.get_safe(target).for_each(lambda b: select_2.update_safe(b, fn))
             case _:
                 raise ValueError()
 
-    def update_unsafe(self, target: Selectable | Dict[str, Any], fn: Callable[[B], B]):
+    def update_unsafe(self, target: Selectable[A] | Dict[str, Any], fn: Callable[[B], B]):
         """
         Update any and every selected element within potentially incomplete data. Raises a `ValueError` if the value cannot be set due to invalid data.
 
@@ -365,14 +424,19 @@ class Select(Generic[A, B]):
             case PropSelect():
                 select_value = self.get_unsafe(target)
                 updated = select_value.map(fn)
-                if isinstance(target, Selectable):
+                if isinstance(target, ModelLike):
                     setattr(target, self.label, updated.value)
                 elif isinstance(target, dict):
                     target[self.label] = updated.value
                 else:
                     raise ValueError(f'Value must be model or dict')
+            case MatchSelect():
+                raise NotImplementedError('You cannot set using a match select!')
             case LinkedSelect(select_1=select_1, select_2=select_2):
-                select_1.get_unsafe(target).for_each(lambda b: select_2.update_unsafe(b, fn))
+                if isinstance(select_2, MatchSelect):
+                    select_1.update_unsafe(target, fn)
+                else:
+                    select_1.get_unsafe(target).for_each(lambda b: select_2.update_unsafe(b, fn))
             case _:
                 raise ValueError()
 
@@ -388,16 +452,21 @@ class Select(Generic[A, B]):
             case PropSelect():
                 select_value = self.get(target)
                 updated = select_value.map(fn)
-                if isinstance(target, Selectable):
+                if isinstance(target, ModelLike):
                     setattr(target, self.label, updated.value)
                 else:
                     raise ValueError(f'Value must be model')
+            case MatchSelect():
+                raise NotImplementedError('You cannot set using a match select!')
             case LinkedSelect(select_1=select_1, select_2=select_2):
-                select_1.get(target).for_each(lambda b: select_2.update(b, fn))
+                if isinstance(select_2, MatchSelect):
+                    select_1.update(target, fn)
+                else:
+                    select_1.get(target).for_each(lambda b: select_2.update(b, fn))
             case _:
                 raise ValueError()
 
-    def clear_safe(self, target: Selectable | Dict[str, Any]):
+    def clear_safe(self, target: Selectable[A] | Dict[str, Any]):
         """
         Clear the selected value within incomplete data, even if this makes the data invalid with respect to the selector.
         Does nothing is selected value is unreachable due to invalid data.
@@ -405,18 +474,23 @@ class Select(Generic[A, B]):
 
         match self:
             case PropSelect():
-                if isinstance(target, Selectable):
+                if isinstance(target, ModelLike):
                     setattr(target, self.label, None)
                 elif isinstance(target, dict):
                     del target[self.label]
                 else:
                     return
+            case MatchSelect():
+                raise NotImplementedError('You cannot set using a match select!')
             case LinkedSelect(select_1=select_1, select_2=select_2):
-                select_1.get_safe(target).for_each(lambda b: select_2.clear_safe(b))
+                if isinstance(select_2, MatchSelect):
+                    select_1.clear_safe(target)
+                else:
+                    select_1.get_safe(target).for_each(lambda b: select_2.clear_safe(b))
             case _:
                 raise ValueError()
 
-    def clear_safe_strict(self, target: Selectable | Dict[str, Any]):
+    def clear_safe_strict(self, target: Selectable[A] | Dict[str, Any]):
         """
         Clear the selected value within incomplete data, finding the closest optional or array property that it can clear.
         Clears optional properties by setting to None and clears array properties by setting to empty list.
@@ -427,7 +501,7 @@ class Select(Generic[A, B]):
             case PropSelect():
                 if not self.is_opt and not self.is_arr:
                     return
-                if isinstance(target, Selectable):
+                if isinstance(target, ModelLike):
                     if self.is_opt:
                         setattr(target, self.label, None)
                     else:
@@ -439,40 +513,50 @@ class Select(Generic[A, B]):
                         target[self.label] = []
                 else:
                     return
+            case MatchSelect():
+                return
             case LinkedSelect():
                 current_select: Select[A, Any] = self
                 while True:
                     match current_select:
                         case PropSelect():
+                            if current_select.is_opt or current_select.is_arr:
+                                return current_select.clear_safe_strict(target)
+                            else:
+                                return
+                        case MatchSelect():
                             return
-                        case PropSelect():
-                            return current_select.clear_safe_strict(target)
                         case LinkedSelect(select_1=select_1, select_2=select_2):
-                            if select_2.is_opt or select_2.is_arr:
+                            if isinstance(select_2, PropSelect) and (select_2.is_opt or select_2.is_arr):
                                 return select_1.get_safe(target).for_each(lambda b: select_2.clear_safe_strict(b))
                             current_select = select_1
             case _:
                 raise ValueError()
 
-    def clear_unsafe(self, target: Selectable | Dict[str, Any]):
+    def clear_unsafe(self, target: Selectable[A] | Dict[str, Any]):
         """
         Clear the selected value within incomplete data, even if this makes the data invalid with respect to the selector.
         Raises a value error if selected value is unreachable due to invalid data.
         """
         match self:
             case PropSelect():
-                if isinstance(target, Selectable):
+                if isinstance(target, ModelLike):
                     setattr(target, self.label, None)
                 elif isinstance(target, dict):
                     del target[self.label]
                 else:
                     return
+            case MatchSelect():
+                raise NotImplementedError('You cannot set using a match select!')
             case LinkedSelect(select_1=select_1, select_2=select_2):
-                select_1.get_unsafe(target).for_each(lambda b: select_2.clear_unsafe(b))
+                if isinstance(select_2, MatchSelect):
+                    select_1.clear_unsafe(target)
+                else:
+                    select_1.get_unsafe(target).for_each(lambda b: select_2.clear_unsafe(b))
             case _:
                 raise ValueError()
 
-    def clear_unsafe_strict(self, target: Selectable | Dict[str, Any]):
+    def clear_unsafe_strict(self, target: Selectable[A] | Dict[str, Any]):
         """
         Clear the selected value within incomplete data, finding the closest optional or array property that it can clear.
         Clears optional properties by setting to None and clears array properties by setting to empty list.
@@ -482,7 +566,7 @@ class Select(Generic[A, B]):
             case PropSelect():
                 if not self.is_opt and not self.is_arr:
                     raise ValueError('Selector does not contain required property')
-                if isinstance(target, Selectable):
+                if isinstance(target, ModelLike):
                     if self.is_opt:
                         setattr(target, self.label, None)
                     else:
@@ -494,17 +578,22 @@ class Select(Generic[A, B]):
                         target[self.label] = []
                 else:
                     raise ValueError(f'Value must be model or dict')
+            case MatchSelect():
+                raise NotImplementedError('You cannot set using a match select!')
             case LinkedSelect():
                 current_select: Select[A, Any] = self
                 while True:
                     match current_select:
                         case PropSelect():
-                            raise ValueError(
-                                f'Unable to clear value: selector path `{self.path}` does not contain clearable element')
-                        case PropSelect():
-                            return current_select.clear_unsafe_strict(target)
+                            if not current_select.is_opt and not current_select.is_arr:
+                                raise ValueError(
+                                    f'Unable to clear value: selector path `{self.path}` does not contain clearable element')
+                            else:
+                                return current_select.clear_unsafe_strict(target)
+                        case MatchSelect():
+                            raise NotImplementedError('You cannot set using a match select!')
                         case LinkedSelect(select_1=select_1, select_2=select_2):
-                            if select_2.is_opt or select_2.is_arr:
+                            if isinstance(select_2, PropSelect) and (select_2.is_opt or select_2.is_arr):
                                 return select_1.get_unsafe(target).for_each(lambda b: select_2.clear_unsafe(b))
                             current_select = select_1
             case _:
@@ -519,7 +608,7 @@ class Select(Generic[A, B]):
             case PropSelect():
                 if not self.is_opt and not self.is_arr:
                     raise ValueError('Selector does not contain required property')
-                if isinstance(target, Selectable):
+                if isinstance(target, ModelLike):
                     if self.is_opt:
                         setattr(target, self.label, None)
                     else:
@@ -531,22 +620,27 @@ class Select(Generic[A, B]):
                         target[self.label] = []
                 else:
                     raise ValueError(f'Value must be model or dict')
+            case MatchSelect():
+                raise NotImplementedError('You cannot set using a match select!')
             case LinkedSelect():
                 current_select: Select[A, Any] = self
                 while True:
                     match current_select:
                         case PropSelect():
-                            raise ValueError(f'Unable to clear value: selector path `{self.path}` does not contain clearable element')
-                        case PropSelect():
-                            return current_select.clear(target)
+                            if not current_select.is_opt and not current_select.is_arr:
+                                raise ValueError(f'Unable to clear value: selector path `{self.path}` does not contain clearable element')
+                            else:
+                                return current_select.clear(target)
+                        case MatchSelect():
+                            raise NotImplementedError('You cannot set using a match select!')
                         case LinkedSelect(select_1=select_1, select_2=select_2):
-                            if select_2.is_opt or select_2.is_arr:
+                            if isinstance(select_2, PropSelect) and (select_2.is_opt or select_2.is_arr):
                                 return select_1.get(target).for_each(lambda b: select_2.clear(b))
                             current_select = select_1
             case _:
                 raise ValueError()
 
-    def copy_to_safe(self, source: Selectable | Dict[str, Any], target: Dict[str, Any]):
+    def copy_to_safe(self, source: Selectable[A] | Dict[str, Any], target: Dict[str, Any]):
         """
         Copies selected value from a potentially incomplete data source to a dict target. Preserves
         intermediate data structures, while only copying selected properties. Overwrites existing properties.
@@ -556,6 +650,8 @@ class Select(Generic[A, B]):
             case PropSelect():
                 value = self.get_safe(source).value
                 target[self.label] = value
+            case MatchSelect():
+                raise NotImplementedError('You cannot set using a match select!')
             case LinkedSelect(select_1=select_1, select_2=select_2):
                 current_target = target
                 current_sel_1: Select[Any, Any] = select_1
@@ -570,10 +666,12 @@ class Select(Generic[A, B]):
                             if current_sel_1.label not in current_target or not isinstance(current_target[current_sel_1.label], dict):
                                 current_target[current_sel_1.label] = {}
                             return value.for_each(lambda b: current_sel_2.copy_to_safe(b, current_target[current_sel_1.label]))
+                        case MatchSelect():
+                            current_sel_1.get_safe(source).for_each(lambda b: current_sel_2.copy_to_safe(b, current_target))
             case _:
                 raise ValueError()
 
-    def copy_to_unsafe(self, source: Selectable | Dict[str, Any], target: Dict[str, Any]):
+    def copy_to_unsafe(self, source: Selectable[A] | Dict[str, Any], target: Dict[str, Any]):
         """
         Copies selected value from a potentially incomplete data source to a dict target. Preserves
         intermediate data structures, while only copying selected properties. Overwrites existing properties.
@@ -584,6 +682,8 @@ class Select(Generic[A, B]):
             case PropSelect():
                 value = self.get_unsafe(source).value
                 target[self.label] = value
+            case MatchSelect():
+                raise NotImplementedError('You cannot set using a match select!')
             case LinkedSelect(select_1=select_1, select_2=select_2):
                 current_target = target
                 current_sel_1: Select[Any, Any] = select_1
@@ -598,6 +698,8 @@ class Select(Generic[A, B]):
                             if current_sel_1.label not in current_target or not isinstance(current_target[current_sel_1.label], dict):
                                 current_target[current_sel_1.label] = {}
                             return value.for_each(lambda b: current_sel_2.copy_to_unsafe(b, current_target[current_sel_1.label]))
+                        case MatchSelect():
+                            current_sel_1.get_unsafe(source).for_each(lambda b: current_sel_2.copy_to_unsafe(b, current_target))
             case _:
                 raise ValueError()
 
@@ -610,6 +712,8 @@ class Select(Generic[A, B]):
             case PropSelect():
                 value = self.get(source).value
                 target[self.label] = value
+            case MatchSelect():
+                raise NotImplementedError('You cannot set using a match select!')
             case LinkedSelect(select_1=select_1, select_2=select_2):
                 current_target = target
                 current_sel_1: Select[Any, Any] = select_1
@@ -624,18 +728,20 @@ class Select(Generic[A, B]):
                             if current_sel_1.label not in current_target or not isinstance(current_target[current_sel_1.label], dict):
                                 current_target[current_sel_1.label] = {}
                             return value.for_each(lambda b: current_sel_2.copy_to(b, current_target[current_sel_1.label]))
+                        case MatchSelect():
+                            current_sel_1.get(source).for_each(lambda b: current_sel_2.copy_to(b, current_target))
             case _:
                 raise ValueError()
 
 
 class SelectVal(Generic[A, B], Select[A, B]):
-    def get_val_safe(self, value: Selectable | Dict[str, Any]) -> B | None:
+    def get_val_safe(self, value: Selectable[A] | Dict[str, Any]) -> B | None:
         """
         Get value directly (i.e., without wrapping in `SelectValue`) from potentially incomplete data source. Returns None if value is missing.
         """
         return self.get_safe(value).as_opt
 
-    def get_val_unsafe(self, value: Selectable | Dict[str, Any]) -> B:
+    def get_val_unsafe(self, value: Selectable[A] | Dict[str, Any]) -> B:
         """
         Get value directly (i.e., without wrapping in `SelectValue`) from potentially incomplete data source. Raises `ValueError` if value is missing.
         """
@@ -669,6 +775,8 @@ class SelectVal(Generic[A, B], Select[A, B]):
         match next:
             case PropOpt():
                 return LinkedSelectOpt(self, next)
+            case MatchSelect():
+                return LinkedSelectOpt(self, next)
             case LinkedSelectOpt(select_1=select_1, select_2=select_2):
                 return LinkedSelectOpt(self(select_1), select_2)
             case _:
@@ -699,13 +807,13 @@ class SelectVal(Generic[A, B], Select[A, B]):
                 raise ValueError()
 
 class SelectOpt(Generic[A, B], Select[A, B]):
-    def get_val_safe(self, value: Selectable | Dict[str, Any]) -> B | None:
+    def get_val_safe(self, value: Selectable[A] | Dict[str, Any]) -> B | None:
         """
         Get value directly (i.e., without wrapping in `SelectValue`) from potentially incomplete data source. Returns None if value is missing due to invalid data.
         """
         return self.get_safe(value).as_opt
 
-    def get_val_unsafe(self, value: Selectable | Dict[str, Any]) -> B | None:
+    def get_val_unsafe(self, value: Selectable[A] | Dict[str, Any]) -> B | None:
         """
         Get value directly (i.e., without wrapping in `SelectValue`) from potentially incomplete data source. Raises `ValueError` if value is missing due to invalid data.
         """
@@ -735,6 +843,8 @@ class SelectOpt(Generic[A, B], Select[A, B]):
         """
         match next:
             case PropOpt():
+                return LinkedSelectOpt(self, next)
+            case MatchSelect():
                 return LinkedSelectOpt(self, next)
             case LinkedSelectOpt(select_1=select_1, select_2=select_2):
                 return LinkedSelectOpt(self(select_1), select_2)
@@ -766,13 +876,13 @@ class SelectOpt(Generic[A, B], Select[A, B]):
                 raise ValueError()
 
 class SelectArr(Generic[A, B], Select[A, B]):
-    def get_val_safe(self, value: Selectable | Dict[str, Any]) -> List[B]:
+    def get_val_safe(self, value: Selectable[A] | Dict[str, Any]) -> List[B]:
         """
         Get values directly (i.e., without wrapping in `SelectValue`) from potentially incomplete data source. Returns empty list if value is missing due to invalid data.
         """
         return self.get_safe(value).as_list
 
-    def get_val_unsafe(self, value: Selectable | Dict[str, Any]) -> List[B]:
+    def get_val_unsafe(self, value: Selectable[A] | Dict[str, Any]) -> List[B]:
         """
         Get values directly (i.e., without wrapping in `SelectValue`) from potentially incomplete data source. Raises `ValueError` if value is missing due to invalid data.
         """
@@ -842,7 +952,7 @@ class SelectArr(Generic[A, B], Select[A, B]):
                 raise ValueError()
 
 class SelectOptArr(Generic[A, B], Select[A, B]):
-    def get_val_safe(self, value: Selectable | Dict[str, Any]) -> List[B] | None:
+    def get_val_safe(self, value: Selectable[A] | Dict[str, Any]) -> List[B] | None:
         """
         Get values (or empty value) directly (i.e., without wrapping in `SelectValue`) from potentially incomplete data source.
         Returns None if value is missing due to invalid data.
@@ -853,7 +963,7 @@ class SelectOptArr(Generic[A, B], Select[A, B]):
             return None
         return result
 
-    def get_val_unsafe(self, value: Selectable | Dict[str, Any]) -> List[B] | None:
+    def get_val_unsafe(self, value: Selectable[A] | Dict[str, Any]) -> List[B] | None:
         """
         Get values (or empty value) directly (i.e., without wrapping in `SelectValue`) from potentially incomplete data source.
         Raises a `ValueError` if value is missing due to invalid data.
@@ -869,14 +979,14 @@ class SelectOptArr(Generic[A, B], Select[A, B]):
         """
         return self.get(value).value # type: ignore
 
-    def get_arr_safe(self, value: Selectable | Dict[str, Any]) -> List[B]:
+    def get_arr_safe(self, value: Selectable[A] | Dict[str, Any]) -> List[B]:
         """
         Get values (or empty value) directly (i.e., without wrapping in `SelectValue`) from potentially incomplete data source,
         converting an empty result to an empty list. Returns an empty list if values are missing due to invalid data.
         """
         return self.get_safe(value).as_list
 
-    def get_arr_unsafe(self, value: Selectable | Dict[str, Any]) -> List[B]:
+    def get_arr_unsafe(self, value: Selectable[A] | Dict[str, Any]) -> List[B]:
         """
         Get values (or empty value) directly (i.e., without wrapping in `SelectValue`) from potentially incomplete data source,
         converting an empty result to an empty list. Raises a `ValueError` if values are missing due to invalid data.
@@ -900,6 +1010,8 @@ class SelectOptArr(Generic[A, B], Select[A, B]):
 
         match next:
             case PropSelect():
+                return LinkedSelectOptArr(self, next)
+            case MatchSelect():
                 return LinkedSelectOptArr(self, next)
             case LinkedSelectArr(select_1=select_1, select_2=select_2):
                 return LinkedSelectOptArr(self(select_1), select_2)
@@ -945,14 +1057,14 @@ class PropSelect(Generic[A, B], Select[A, B]):
         Whether the property is an array (or `List`) type
         """
         return self.__is_arr
-    
-    @property
-    def target(self) -> Type[B]:
-        return self.__target
-    
+
     @property
     def origin(self) -> Type[A]:
         return self.__origin
+
+    @property
+    def target(self) -> Type[B]:
+        return self.__target
 
     @classmethod
     def val(cls, _label: str, _origin: Type[A], _target: Type[B], _data: Dict[str, Any]) -> Prop[A, B]:
@@ -1041,9 +1153,60 @@ class PropOptArr(Generic[A, B], PropSelect[A, B], SelectOptArr[A, B]):
         return Prop(self.label, self.origin, Optional[List[self.target]], self.data, False, False) # type: ignore
 
 @dataclass(frozen=True)
+class MatchSelect(Generic[A, B], SelectOpt[A, B]):
+    __origin: Type[A]
+    __target: Type[B]
+
+    def match(self, value: A) -> bool:
+        raise NotImplementedError()
+
+    def match_partial(self, value: Selectable[A] | Dict[str, Any]) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def origin(self) -> Type[A]:
+        return self.__origin
+
+    @property
+    def target(self) -> Type[B]:
+        return self.__target
+
+@dataclass(frozen=True)
+class Discrim(Generic[A, B], MatchSelect[A, B]):
+    __selector: PropSelect[A, Any]
+    __value: Any
+
+    @property
+    def value(self) -> Any:
+        return self.__value
+    
+    @property
+    def property(self) -> PropSelect[A, Any]:
+        return self.__selector
+
+    def match(self, value: A) -> bool:
+        result = (self.__selector.get(value).value == self.__value)
+        return result # type: ignore[no-any-return]
+
+    def match_partial(self, value: Selectable[A] | Dict[str, Any]) -> bool:
+        result = self.__selector.get_safe(value).value == self.__value
+        return result # type: ignore[no-any-return]
+
+    def __hash__(self):
+        return hash((super(), self.__selector, self.__value))
+
+@dataclass(frozen=True)
 class LinkedSelect(Generic[A, B, C], Select[A, C]):
     select_1: Select[A, B]
-    select_2: PropSelect[B, C]
+    select_2: PropSelect[B, C] | MatchSelect
+
+    @property
+    def origin(self) -> Type[A]:
+        return self.select_1.origin
+
+    @property
+    def target(self) -> Type[C]:
+        return self.select_2.target
 
 @dataclass(frozen=True)
 class LinkedSelectVal(Generic[A, B, C], LinkedSelect[A, B, C], SelectVal[A, C]):
