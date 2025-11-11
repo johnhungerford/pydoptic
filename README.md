@@ -400,11 +400,11 @@ To convert to dict and serialize:
 import json
 
 model: MyModel = MyModel(prop_1='value', prop_2=23, ...)
-dict_value: Dict[str, Any] = model.to_mapping_full()
+dict_value: Dict[str, Any] = model.as_dict_full()
 str_value: str = json.dumps(dict_value)
 
 partial_model: PartialModel[MyModel] = MyModel.partial(prop_1='value', prop_2=23, ...)
-partial_dict: Dict[str, Any] = partial_model.to_mapping_full()
+partial_dict: Dict[str, Any] = partial_model.as_dict_full()
 partial_str: str = json.dumps(partial_dict)
 ```
 
@@ -796,7 +796,7 @@ You can see the discriminator value if you convert a model to a `dict`:
 ```python3
 value = Root(super=[Sub1(prop_1=23), Sub2(prop_2="hello")])
 
-print(value.as_mapping_full())
+print(value.as_dict_full())
 # {'super': [{'subtype': 'Sub1', 'prop_1': 23}, {'subtype': 'Sub2', 'prop_2': 'hello'}]}
 ```
 

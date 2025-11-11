@@ -492,7 +492,7 @@ def test_base_model_as_mapping_full_should_be_reversable():
         ),
     )
 
-    dict_value = model_value.as_mapping_full()
+    dict_value = model_value.as_dict_full()
 
     model_value_2 = TestModel(**dict_value)
 
@@ -535,7 +535,7 @@ def test_base_model_select_parts_should_generate_partial_model_from_selectors():
         TestModel.other(Other.another)(Another.value),
     )
 
-    assert partial_model.as_mapping_full() == {
+    assert partial_model.as_dict_full() == {
         'select_arr_empty': [1,2,3],
         'other': {
             'value': True,

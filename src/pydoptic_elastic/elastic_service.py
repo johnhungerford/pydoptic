@@ -29,7 +29,7 @@ class ElasticService:
         self.__client.indices.refresh(index=model._get_index_name())
 
     def index(self, document: M, **kwargs) -> str:
-        response = self.__client.index(index=document.__class__._get_index_name(), document=document.as_mapping_full(), **kwargs)
+        response = self.__client.index(index=document.__class__._get_index_name(), document=document.as_dict_full(), **kwargs)
         return _IndexResponse.id.get_val_unsafe(response.body)
     
     def get(self, cls: Type[M], id: str, **kwargs) -> M | None:

@@ -125,7 +125,7 @@ def _fully_validate(target: Type[M], value: Any, validators: Dict[Type[Any], Val
     elif isinstance(value, PartialModel):
         if not issubclass(value.model, target):
             raise ValueError(f'received partial model of {value.model} instead of expected model {target}')
-        return target(**value.as_mapping(), _allow_extra_args=True, _validators=validators)
+        return target(**value.as_dict(), _allow_extra_args=True, _validators=validators)
     elif isinstance(value, dict):
         return target(**value, _validators=validators)
     else:
@@ -185,7 +185,7 @@ class BaseModel(ModelLike, metaclass=BaseModelMeta):
         """
         Convert to a `PartialModel`
         """
-        return PartialModel(self.__class__, **self.as_mapping())
+        return PartialModel(self.__class__, **self.as_dict())
 
     def __init__(self, **kwargs):
         """
@@ -250,7 +250,7 @@ class BaseModel(ModelLike, metaclass=BaseModelMeta):
                     raise ValueError(f'Unrecognized parameter {k} provided (value: {v})')
 
     def __repr__(self):
-        return self.__class__.__name__ + '(' + ', '.join(f'{k}={v}' for k, v in self.as_mapping().items()) + ')'
+        return self.__class__.__name__ + '(' + ', '.join(f'{k}={v}' for k, v in self.as_dict().items()) + ')'
 
     def __setattr__(self, name: str, value):
         if name in self.properties():
@@ -260,7 +260,7 @@ class BaseModel(ModelLike, metaclass=BaseModelMeta):
         
         super().__setattr__(name, value)
 
-    def as_mapping(self) -> Mapping[str, Any]:
+    def as_dict(self) -> Mapping[str, Any]:
         mapping: Dict[str, Any] = {}
         for name in self.__class__.properties().keys():
             try:
@@ -270,13 +270,13 @@ class BaseModel(ModelLike, metaclass=BaseModelMeta):
                 ...
         return mapping
 
-    def as_mapping_full(self) -> Mapping[str, Any]:
+    def as_dict_full(self) -> Mapping[str, Any]:
         mapping: Dict[str, Any] = {}
         for name in self.__class__.properties().keys():
             try:
                 value = getattr(self, name)
                 if isinstance(value, ModelLike):
-                    mapping[name] = value.as_mapping_full()
+                    mapping[name] = value.as_dict_full()
                 else:
                     mapping[name] = value
             except AttributeError:
@@ -398,7 +398,7 @@ class PartialModel(Generic[M], Selectable[M]):
         
         object.__getattribute__(self, '_dict')[key] = value
 
-    def as_mapping(self) -> Mapping[str, Any]:
+    def as_dict(self) -> Mapping[str, Any]:
         return self._dict
 
     def select_partial(self, *selectors: Select[M, Any]) -> PartialModel[M]:

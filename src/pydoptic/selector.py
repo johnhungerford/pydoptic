@@ -14,32 +14,32 @@ class ModelLike:
     Base class for typed model that can be manipulated by `Select` instances
     """
 
-    def as_mapping(self) -> Mapping[str, Any]:
+    def as_dict(self) -> Mapping[str, Any]:
         """
-        Shallow conversion to a dict representation. Properties that are `Selectable` are not converted.
+        Shallow conversion to a dict representation. Nested models are not converted.
         """
         raise NotImplementedError()
     
-    def as_mapping_full(self) -> Mapping[str, Any]:
+    def as_dict_full(self) -> Mapping[str, Any]:
         """
         Complete conversion to a dict representation. Properties that are `Selectable` are converted recursively.
         """
         mapping: Dict[str, Any] = {}
-        for k, v in self.as_mapping().items():
+        for k, v in self.as_dict().items():
             if isinstance(v, ModelLike):
-                mapping[k] = v.as_mapping_full()
+                mapping[k] = v.as_dict_full()
             else:
                 mapping[k] = v
         return mapping
 
     def __eq__(self, value):
         if isinstance(value, ModelLike):
-            other_dict = value.as_mapping_full()
+            other_dict = value.as_dict_full()
         elif isinstance(value, dict):
             other_dict = value
         else:
             return False
-        return self.as_mapping_full() == other_dict
+        return self.as_dict_full() == other_dict
     
 class Selectable(Generic[C], ModelLike):
     """
