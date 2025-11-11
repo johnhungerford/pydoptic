@@ -247,14 +247,16 @@ class Select(Generic[A, B]):
                 elif isinstance(target, dict):
                     result = target.get(self.label)
                 else:
-                    raise ValueError(f'Value must be model or dict')
+                    raise ValueError(f'Value must be partial model or dict')
                 if result is None and not self.is_opt:
                     raise ValueError(f'Unexpected empty value for attribute {self.label}')
                 if result is not None and self.is_arr and not isinstance(result, list):
                     raise ValueError(f'Array selector returned non-array value: {result}')
                 return SelectValue(result, self.is_opt, self.is_arr)
             case MatchSelect():
-                return self.get(target)
+                if self.match_partial(target):
+                    return SelectValue(cast(B, target), True, False)
+                return SelectValue(None, True, False)
             case LinkedSelect(select_1=select_1, select_2=select_2):
                 result = select_1.get_unsafe(target).flat_map(lambda b: select_2.get_unsafe(b))
                 return result
@@ -270,22 +272,16 @@ class Select(Generic[A, B]):
             case PropSelect():
                 if isinstance(target, ModelLike):
                     result = getattr(target, self.label)
-                elif isinstance(target, dict):
-                    result = target.get(self.label)
                 else:
-                    raise ValueError(f'Value must be model or dict')
+                    raise ValueError(f'Value must be model')
                 if result is None and not self.is_opt:
                     raise ValueError(f'Unexpected empty value for attribute {self.label}')
                 if result is not None and self.is_arr and not isinstance(result, list):
                     raise ValueError(f'Array selector returned non-array value: {result}')
                 return SelectValue(result, self.is_opt, self.is_arr)
             case MatchSelect():
-                if isclass(target) and issubclass(target, self.target):
-                    if self.match(target):
-                        return SelectValue(cast(B, target), True, False)
-                if isinstance(target, Selectable) or isinstance(target, dict):
-                    if self.match_partial(target):
-                        return SelectValue(cast(B, target), True, False)
+                if self.match(target):
+                    return SelectValue(cast(B, target), True, False)
                 return SelectValue(None, True, False)
             case LinkedSelect(select_1=select_1, select_2=select_2):
                 result = select_1.get(target).flat_map(lambda b: select_2.get(b))
@@ -1030,6 +1026,11 @@ class PropSelect(Generic[A, B], Select[A, B]):
     def __init__(self, l: str, o: Type[A], t: Type[B], d: Dict[str, Any], io: bool, ia: bool):
         raise NotImplementedError('Abstract base class AttributeSelect should not be implemented directly')
     
+    def __repr__(self):
+        target_name = self.__target.__name__ if isclass(self.__target) else str(self.__target)
+        suffix = ' (opt/arr)' if self.__is_opt and self.__is_arr else ' (opt)' if self.__is_opt else ' (arr)' if self.__is_arr else ''
+        return f'{self.__origin.__name__} -{self.__label}-> {target_name}{suffix}'
+
     @property
     def label(self) -> str:
         """
@@ -1095,12 +1096,23 @@ class PropSelect(Generic[A, B], Select[A, B]):
         return PropOptArr(_label, _origin, _target, _data, True, True) # type: ignore
 
 @dataclass(frozen=True)
+class Param(Generic[A, B]):
+    label: str
+    value: B
+
+@dataclass(frozen=True)
 class Prop(Generic[A, B], SelectVal[A, B], PropSelect[A, B]):
     """
     A required, non-array property
     """
     _is_opt = False
     _is_arr = False
+
+    def param(self, value: B) -> Param[A, B]:
+        return Param(self.label, value)
+    
+    def __repr__(self):
+        return super().__repr__()
 
 @dataclass(frozen=True)
 class PropOpt(Generic[A, B], PropSelect[A, B], SelectOpt[A, B]):
@@ -1117,6 +1129,12 @@ class PropOpt(Generic[A, B], PropSelect[A, B], SelectOpt[A, B]):
         control when setting/updating/clearing values.
         """
         return Prop(self.label, self.origin, Optional[self.target], self.data, False, False) # type: ignore
+    
+    def param(self, value: B | None) -> Param[A, B | None]:
+        return Param(self.label, value)
+    
+    def __repr__(self):
+        return super().__repr__()
 
 @dataclass(frozen=True)
 class PropArr(Generic[A, B], PropSelect[A, B], SelectArr[A, B]):
@@ -1130,6 +1148,12 @@ class PropArr(Generic[A, B], PropSelect[A, B], SelectArr[A, B]):
         control when setting/updating/clearing values.
         """
         return Prop(self.label, self.origin, List[self.target], self.data, False, False) # type: ignore
+    
+    def param(self, value: List[B]) -> Param[A, List[B]]:
+        return Param(self.label, value)
+    
+    def __repr__(self):
+        return super().__repr__()
 
 @dataclass(frozen=True)
 class PropOptArr(Generic[A, B], PropSelect[A, B], SelectOptArr[A, B]):
@@ -1151,6 +1175,13 @@ class PropOptArr(Generic[A, B], PropSelect[A, B], SelectOptArr[A, B]):
         Limited composition, but can provide greater control when setting/updating/clearing values.
         """
         return Prop(self.label, self.origin, Optional[List[self.target]], self.data, False, False) # type: ignore
+    
+    def param(self, value: List[B] | None) -> Param[A, List[B] | None]:
+        return Param(self.label, value)
+    
+    def __repr__(self):
+        return super().__repr__()
+
 
 @dataclass(frozen=True)
 class MatchSelect(Generic[A, B], SelectOpt[A, B]):
@@ -1170,6 +1201,10 @@ class MatchSelect(Generic[A, B], SelectOpt[A, B]):
     @property
     def target(self) -> Type[B]:
         return self.__target
+    
+    def __repr__(self):
+        target_name = self.__target.__name__ if isclass(self.__target) else str(self.__target)
+        return f'{self.__origin.__name__} ~> {target_name}'
 
 @dataclass(frozen=True)
 class Discrim(Generic[A, B], MatchSelect[A, B]):
@@ -1185,7 +1220,10 @@ class Discrim(Generic[A, B], MatchSelect[A, B]):
         return self.__selector
 
     def match(self, value: A) -> bool:
-        result = (self.__selector.get(value).value == self.__value)
+        try:
+            result = (self.__selector.get(value).value == self.__value)
+        except AttributeError:
+            return False
         return result # type: ignore[no-any-return]
 
     def match_partial(self, value: Selectable[A] | Dict[str, Any]) -> bool:
@@ -1194,6 +1232,9 @@ class Discrim(Generic[A, B], MatchSelect[A, B]):
 
     def __hash__(self):
         return hash((super(), self.__selector, self.__value))
+    
+    def __repr__(self):
+        return super().__repr__()
 
 @dataclass(frozen=True)
 class LinkedSelect(Generic[A, B, C], Select[A, C]):
@@ -1207,19 +1248,35 @@ class LinkedSelect(Generic[A, B, C], Select[A, C]):
     @property
     def target(self) -> Type[C]:
         return self.select_2.target
+    
+    def __repr__(self):
+        next: str
+        match self.select_2:
+            case PropSelect():
+                target_name = self.select_2.target.__name__ if isclass(self.select_2.target) else str(self.select_2.target)
+                suffix = ' (opt/arr)' if self.select_2.is_opt and self.select_2.is_arr else ' (opt)' if self.select_2.is_opt else ' (arr)' if self.select_2.is_arr else ''
+                next = f' -{self.select_2.label}-> {target_name}{suffix}'
+            case MatchSelect():
+                target_name = self.select_2.target.__name__ if isclass(self.select_2.target) else str(self.select_2.target)
+                next = f' ~> {target_name}'
+        return str(self.select_1) + next
 
 @dataclass(frozen=True)
 class LinkedSelectVal(Generic[A, B, C], LinkedSelect[A, B, C], SelectVal[A, C]):
-    ...
+    def __repr__(self):
+        return super().__repr__()
 
 @dataclass(frozen=True)
 class LinkedSelectOpt(Generic[A, B, C], LinkedSelect[A, B, C], SelectOpt[A, C]):
-    ...
+    def __repr__(self):
+        return super().__repr__()
 
 @dataclass(frozen=True)
 class LinkedSelectArr(Generic[A, B, C], LinkedSelect[A, B, C], SelectArr[A, C]):
-    ...
+    def __repr__(self):
+        return super().__repr__()
 
 @dataclass(frozen=True)
 class LinkedSelectOptArr(Generic[A, B, C], LinkedSelect[A, B, C], SelectOptArr[A, C]):
-    ...
+    def __repr__(self):
+        return super().__repr__()

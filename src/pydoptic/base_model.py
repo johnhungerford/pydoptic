@@ -1,5 +1,5 @@
 from __future__ import annotations
-from pydoptic.selector import Discrim, Prop, Select, PropSelect, SelectVal, SelectOpt, SelectArr, SelectOptArr, ModelLike, SelectValue, A, B, Selectable
+from pydoptic.selector import Discrim, Param, Prop, Select, PropSelect, SelectVal, SelectOpt, SelectArr, SelectOptArr, ModelLike, SelectValue, A, B, Selectable
 
 from dataclasses import dataclass
 from inspect import isclass
@@ -166,20 +166,20 @@ class BaseModel(ModelLike, metaclass=BaseModelMeta):
         return PartialModel(cls, **kwargs)
 
     @classmethod
-    def construct_partial(cls, values: Dict[PropSelect[Self, Any], Any], **kwargs) -> PartialModel[Self]:
+    def construct_partial(cls, *values: Param[Self, Any], **kwargs) -> PartialModel[Self]:
         """
         Create a partial instance of this model using selectors to specify fields. Required properties can be 
         omitted, but must be otherwise valid. See `PartialModel`.
         """
-        return PartialModel(cls, **{sel.label: val for sel, val in values.items()}, **kwargs)
+        return PartialModel(cls, **{p.label: p.value for p in values}, **kwargs)
 
     @classmethod
-    def construct(cls, values: Dict[PropSelect[Self, Any], Any], **kwargs) -> Self:
+    def construct(cls, *values: Param[Self, Any], **kwargs) -> Self:
         """
         Create an instance of this model using selectors to specify fields instead of keyword arguments. 
         Required properties can be omitted, but must be otherwise valid. See `PartialModel`.
         """
-        return cls(**{sel.label: val for sel, val in values.items()}, **kwargs)
+        return cls(**{p.label: p.value for p in values}, **kwargs)
 
     def as_partial(self) -> PartialModel[Self]:
         """

@@ -3,7 +3,7 @@ from elasticsearch import Elasticsearch
 from pydoptic.selector import Prop
 from pydoptic_elastic.elastic_model import ElasticModel
 from pydoptic_elastic.elastic_service import ElasticService
-from pydoptic_elastic.query import Query
+from pydoptic_elastic.elastic_query import Query
 
 class SimpleModel(ElasticModel):
     prop_1: Prop['SimpleModel', int]
@@ -53,11 +53,11 @@ def test_search_records():
         service.index(value_2)
         service.refresh_index(SimpleModel)
 
-        query_1 = Query.match(SimpleModel.prop_1, SimpleModel.prop_1.get_val(value_1))
+        query_1 = Query[SimpleModel].match(SimpleModel.prop_1, SimpleModel.prop_1.get_val(value_1))
         res_1 = list(service.search(query_1))
         assert res_1 == [value_1]
 
-        query_2 = Query.match(SimpleModel.prop_1, SimpleModel.prop_1.get_val(value_2))
+        query_2 = Query[SimpleModel].match(SimpleModel.prop_1, SimpleModel.prop_1.get_val(value_2))
         res_2 = list(service.search(query_2))
         assert res_2 == [value_2]
 

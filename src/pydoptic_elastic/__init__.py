@@ -1,3 +1,3 @@
 from pydoptic_elastic.elastic_model import ElasticModel, ESMapping, elastic_prop
 from pydoptic_elastic.elastic_service import ElasticService
-from pydoptic_elastic.query import Query
+from pydoptic_elastic.elastic_query import Query

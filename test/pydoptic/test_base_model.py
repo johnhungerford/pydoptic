@@ -72,7 +72,7 @@ def test_base_model_should_construct_selector_from_select_opt_arr():
     assert TestModel.select_opt_arr_name == PropSelect.opt_arr('select_opt_arr_renamed', TestModel, int, {})
 
 def test_base_model_should_accept_valid_argument_types():
-    model_value = TestModel(
+    model_value_1 = TestModel(
         annotation="str",
         select_val_empty=1,
         select_val_renamed=1,
@@ -90,17 +90,36 @@ def test_base_model_should_accept_valid_argument_types():
         ),
     )
 
-    assert model_value.annotation == "str" # type: ignore[attr-defined]
-    assert model_value.select_val_empty == 1 # type: ignore[attr-defined]
-    assert model_value.select_val_renamed == 1 # type: ignore[attr-defined]
-    assert model_value.select_opt_empty == 1 # type: ignore[attr-defined]
-    assert model_value.select_opt_renamed == 1 # type: ignore[attr-defined]
-    assert model_value.select_arr_empty == [1,2,3] # type: ignore[attr-defined]
-    assert model_value.select_arr_renamed == [1,2,3] # type: ignore[attr-defined]
-    assert model_value.select_opt_arr_empty == [1,2,3] # type: ignore[attr-defined]
-    assert model_value.select_opt_arr_renamed == [1,2,3] # type: ignore[attr-defined]
-    assert model_value.other.value == True # type: ignore[attr-defined]
-    assert model_value.other.another.value == 0.2 # type: ignore[attr-defined]
+    model_value_2 = TestModel.construct(
+        TestModel.annotation.param("str"),
+        TestModel.select_val_empty.param(1),
+        TestModel.select_val_name.param(1),
+        TestModel.select_opt_empty.param(1),
+        TestModel.select_opt_name.param(1),
+        TestModel.select_arr_empty.param([1,2,3]),
+        TestModel.select_arr_name.param([1,2,3]),
+        TestModel.select_opt_arr_empty.param([1,2,3]),
+        TestModel.select_opt_arr_name.param([1,2,3]),
+        TestModel.other.param(Other(
+            value=True,
+            another=Another(
+                value=0.2
+            )
+        )),
+    )
+
+    for model_value in [model_value_1, model_value_2]:
+        assert model_value.annotation == "str" # type: ignore[attr-defined]
+        assert model_value.select_val_empty == 1 # type: ignore[attr-defined]
+        assert model_value.select_val_renamed == 1 # type: ignore[attr-defined]
+        assert model_value.select_opt_empty == 1 # type: ignore[attr-defined]
+        assert model_value.select_opt_renamed == 1 # type: ignore[attr-defined]
+        assert model_value.select_arr_empty == [1,2,3] # type: ignore[attr-defined]
+        assert model_value.select_arr_renamed == [1,2,3] # type: ignore[attr-defined]
+        assert model_value.select_opt_arr_empty == [1,2,3] # type: ignore[attr-defined]
+        assert model_value.select_opt_arr_renamed == [1,2,3] # type: ignore[attr-defined]
+        assert model_value.other.value == True # type: ignore[attr-defined]
+        assert model_value.other.another.value == 0.2 # type: ignore[attr-defined]
 
 
 def test_base_model_should_accept_valid_missing_arguments():
@@ -598,3 +617,5 @@ def test_base_model_should_allow_type_checked_attributes_using_aliases():
     value = BiModel(prop_1=23, prop_2="hi")
     assert value.prop_1 == BiModel.prop_1_sel.get_val(value) == 23
     assert value.prop_2 == BiModel.prop_2_sel.get_val(value) == "hi"
+
+    

@@ -58,7 +58,7 @@ Pydoptic provides an alternative way to model data in Python -- and indeed in an
 
 ## How?
 
-Whereas traditional data models represent data as *containers* of properties, Pydoptic models data as collections of *references* to properties. In a traditional data type, a "property" is a value contained by an in-memory instance of the type in question. In Pydoptic, a "property" is a *description* of a value belonging to a type. This description can be used to do the usual things -- storing a value in an object or retrieving it from an object -- but it can also do a greater more. For instance, it can be used to store a value in a *remote* data source, or query it and retrieve it from that data source, or... pretty much anything else you can think of that might need to be done with it!
+Whereas traditional data models represent data as *containers* of properties, Pydoptic models data as collections of *references* to properties. In a traditional data type, a "property" is a value contained by an in-memory instance of the type in question. In Pydoptic, a "property" is a *description* of a value belonging to a type. This description can be used to do the usual things -- storing a value in an object or retrieving it from an object -- but it can also do a much more. For instance, it can be used to store a value in a *remote* data source, or query it and retrieve it from that data source, or... pretty much anything else you can think of that might need to be done with it!
 
 Here is what a Pydoptic version of the data model above looks like:
 
@@ -89,7 +89,7 @@ class Person(BaseModel):
     is_active: Prop['Person', bool]
 ```
 
-The type signatures of the properties require some more boilerplate, to be sure. Most notably, they all contain references to the model class that they belong to. This may seem redundant, but it's a crucial feature that makes them as powerful as the are: because they contain references back to the classes they belong to, they can be used entirely independently of those classes. Each property -- which is only a *class* attribute -- is initialized with a value containing references to both its "origin" type (the model class) and its "target" type (the second type parameter on the right) along with its attribute name and flags indicating whether it's optional (for `PropOpt` properties), array (`PropArr`), or both (`PropOptArr`).
+The type signatures of the properties include some more boilerplate, to be sure. Most notably, they all contain references to the model class that they belong to. This may seem redundant, but it's a crucial feature that makes them as powerful as the are: because they contain references back to the classes they belong to, they can be used entirely independently of those classes. Each property -- which is only a *class* attribute -- is initialized with a value containing references to both its "origin" type (the model class) and its "target" type (the second type parameter on the right) along with its attribute name and flags indicating whether it's optional (for `PropOpt` properties), array (`PropArr`), or both (`PropOptArr`).
 
 By constructing our properties as comprehensive metadata *about* values and their relationship with the model they belong to, rather than simply the values themselves, we provide ourselves with a much more flexible and powerful tool. Let's see what we can do with them.
 
@@ -112,10 +112,10 @@ Note that your type checker will complain that `person.name` is a `Prop` instead
 person_name = Person.name.get_val(person)
 
 print(person_name)
-#John
+# John
 ```
 
-Your type checker will recognize `person_name` as having a type `str`. While this is a fairly verbose way of getting a simple value, its utility will become clearer when you find yourself frequently accessing nested data. For instance, say you want to invert the `is_active` status of every members of every organization a given person is connected with. Ordinarily this would require a fairly elaborate combination of `for` loops and and `if` statements:
+Your type checker will recognize `person_name` as having a type `str`. While this is a fairly verbose way of getting a simple value, its utility will become clearer when you find yourself frequently accessing nested data. For instance, say you want to flip the `is_active` status of every members of every organization a given person is connected with. Ordinarily this would require a fairly elaborate combination of `for` loops and and `if` statements:
 
 ```python3
 if person.organizations is not None:
@@ -135,14 +135,14 @@ print(statuses)
 # [True, False, False, True, ...]
 
 # All the updating is done here:
-related_status_select.update(lambda status: !status)
+related_status_select.update(person, lambda status: !status)
 
 statuses = related_status_select.get(person).as_list
 print(statuses) 
 # [False, True, True, False, ...]
 ```
 
-As your type checker should indicate, `select_related_status` is a `Select[Person, bool]` which is composed from the `Prop`s `Person.organizations`, `Organization.members`, and `Person.is_active`. This particular chain of props can compose because each prop's *target* type is the same as the *origin* type of the prop chained to it. When this is not the case (meaning the chaining is *invalid*), the type checker will complain. The resulting `Select` can then be used to retrieve and update all `Person.is_active` properties (the final `Prop` in the chain) nested within the original `person` via the path `organizations` -> `members` -> `is_active`. Since `Person.organizations` and `Organization.members` are optional properties, ordinarily retrieving and updating these values would require checking for `None` multiple times.
+As your type checker should indicate, `select_related_status` is a `Select[Person, bool]` which is composed from the `Prop`s `Person.organizations`, `Organization.members`, and `Person.is_active`. This particular chain of props can compose because each prop's *target* type is the same as the *origin* type of the prop chained to it. When this is not the case (meaning the chaining is *invalid*), the type checker will complain. The resulting `Select` can then be used to retrieve and update all `Person.is_active` properties (the final `Prop` in the chain) nested within the original `person` via the path `organizations` -> `members` -> `is_active`. Since `Person.organizations` and `Organization.members` are optional properties, ordinarily retrieving and updating these values would require checking for `None` in multiple places.
 
 ### Incomplete data
 
@@ -159,7 +159,7 @@ print(Person.name.get_val_unsafe(person_dict))
 # John
 ```
 
-As you can see in the example above, there are two ways to represent incomplete data. `PartialModel` is a model type that can have missing properties and extraneous properties, but any property whose name corresponds to a property on the full model must be valid. Hence `Person.partial(name=23)` would fail because `23` is not a string. This is useful when you are consuming partial data from a data source but still want to validate it. If you don't want to validate the data at all, you can also use a `dict`. If you know your data source is producing valid data, it often makes sense to just keep your data in an untyped `Dict[str, Any]`.
+As you can see in the example above, there are two ways to represent incomplete data. `PartialModel` is a model type that can have missing properties and extraneous properties, but any property whose name corresponds to a property on the full model must be valid. Hence `Person.partial(name=23)` would fail because `23` is not a string. This is useful when you are consuming partial data from a data source but still want to validate it. If you don't want to validate the data at all, you can also use a `dict`. If you know your data source is producing valid data, it probably makes sense to just keep your data in an untyped `Dict[str, Any]`.
 
 All of the data manipulation methods used on full models have versions that can be used on `PartialModel`s and `dict`s. Methods with the suffix `_unsafe` will work exactly like the regular method, but will raise a `ValueError` when required data is missing (or invalid in certain ways); methods with the suffix `_safe` will return `None` when data is invalid or (for mutating methods) fail silently.
 
@@ -218,7 +218,7 @@ I hope the above has indicated clearly enough how pydoptic can be used to solve 
 
 Pydoptic is inspired by a concept from functional programming called "optics". In functional programming, optics are not just useful but pretty much necessary due to the relative difficulty of updating nested properties in immutable data structures. Since updating nested data is easier in imperative languages like Python, optics tend not to be used much. There a couple of optics libraries out there for Python, but they try to be functional in the full sense, which is to say they are designed to create immutable copies of dataclasses rather than mutate them.
 
-Pydoptic's approach differs from most optics libraries in two ways. First, it takes the compositional properties of optic types from functional programming while giving them power to mutate objects. Second, it "reifies" the optics. Functional optics are typically encoded as *functions* that retrieve or update data and can be composed in various ways; in Pydoptic, they are encoded as *data*. They are *descriptions* of the things that *can be* accessed or updated. The actual functionality for doing the accessing/updating is secondary, and is implemented by *interpreting* the descriptions. This *reification* of the optics gives it a more general power than traditional optics.
+Pydoptic's approach differs from most optics libraries in two ways. First, it takes the compositional properties of optic types from functional programming while giving them power to mutate objects. Second, it "reifies" the optics. Functional optics are typically encoded as *functions* that retrieve or update data and can be composed in various ways; in Pydoptic, they are encoded as *data*. They are *descriptions* of the things that *could be* accessed or updated. The actual functionality for doing the accessing/updating is secondary, and is implemented by *interpreting* the descriptions. This *reification* of the optics gives it a more general power than traditional optics.
 
 This concept of reified optics comes from the Scala project [ZIO schema](https://zio.dev/zio-schema/), which provides (among other things) a similar mechanism for referencing properties via "accessors". Pydoptic provides a simplified version of this approach appropriate to Python and its more limited (though still quite powerful!) type system. The main innovation of Pydoptic (beyond bringing optics to mutable data) is that it models data "optics-first," unlike ZIO-schema, which (for good reasons connected with Scala and the JVM) *derives* optics *from* traditional data models (i.e., data classes).
 
@@ -226,7 +226,7 @@ This concept of reified optics comes from the Scala project [ZIO schema](https:/
 
 ### Defining and constructing models
 
-There are two basic units of data in Pydoptic: `BaseModel` and `PropSelect[A, B]`, where `A` is some subtype of `BaseModel`. Models of type `BaseModel` are defined by the `PropSelect` class attributes, which are class attributes describing what values can be stored in or retrieved from the model:
+There are two basic units of data in Pydoptic: `BaseModel` and `PropSelect[A, B]`, where `A` is some subtype of `BaseModel`. Models of type `BaseModel` are defined by their `PropSelect` class attributes, which are class attributes describing what values can be stored in or retrieved from the model:
 
 ```python3
 class Model1(BaseModel):
@@ -242,7 +242,7 @@ Moreover, `prop_1` and `prop_2` are not just type definitions -- they are actual
 print(f'Model1.prop_1 describes a property on {prop_1.origin} with a type {prop_1.target} under the key {prop_1.label}')
 
 # Output:
-# Model1.prop_1 describes a property on <class '__main__.Somat'> with a type <class 'int'> under the key prop_1
+# Model1.prop_1 describes a property on <class '__main__.Model1'> with a type <class 'int'> under the key prop_1
 ```
 
 Any subclass of `BaseModel` will automatically construct the appropriate values for every `Prop` you include on the class definition, setting the `label` field with the attribute name, and setting the `origin` and `target` fields with the type parameters you provide. You can also customize the property as follows:
@@ -266,13 +266,13 @@ Once you define a model, there are kinds of instances we can construct:
 ```python3
 # Fully validated model
 model_1_kw: Model2 = Model2(prop_one=42, prop_two="hello")
-model_2_pr: Model2 = Model2.construct({Model1.prop_1: 42, Model1.prop_2: "hello"})
+model_2_pr: Model2 = Model2.construct(Model1.prop_1.param(42), Model1.prop_2.param("hello"))
 
 # Partial model
 model_1_partial_kw: PartialModel[Model2] = Model2.partial(prop_one=42)
-model_1_partial_kw: PartialModel[Model2] = Model2.construct_partial({
-    Model.prop_2: "hello"
-})
+model_1_partial_pr: PartialModel[Model2] = Model2.construct_partial(
+    Model.prop_2.param("hello"),
+)
 
 # Dict
 model_1_dict: Dict[str, Any] = {'prop_one': 42}
@@ -280,7 +280,7 @@ model_1_dict: Dict[str, Any] = {'prop_one': 42}
 
 Instances of the model can be constructed the same way as Pydantic, using keyword arguments to pass property values to the constructor. Note that, unlike Pydantic, your IDE or type checker is not going to give you any help with this. Pydantic provides plugins to support this; this would not be possible for Pydoptic since the property names can be manually customized. In `Model2`, for instances, the keywords we have to provide for our constructor arguments ("prop_one" and "prop_two") are different from the names of those properties in the class definition (`prop_1` and `prop_2`).
 
-To help us ensure we're using the correct properties, we have `construct` variants for constructing models and partial models using the `Prop`s themselves as keys instead of strings. While more verbose, it means you don't have to remember the property names.
+To help us ensure we're using the correct properties, we have `construct` variants for constructing models and partial models using the `Prop`s themselves instead of strings. These variants accept a vararg list of `Param`s, which you can construct by calling the `param` method on each of your required `Prop`s. While more verbose, it will ensure that the values you provide match the `Prop` types and means you don't have to remember the property names. The only thing it won't ensure is exhaustivity.
 
 Partial models are models that can be missing any or all of the properties declared on the model class. However, the properties it *does* must be otherwise valid. The following would raise an exception:
 
@@ -312,7 +312,7 @@ While it is in principle possible for you to simply use `Prop` for each of these
 
 Moreover, once you have defined your properties using the specific `-Opt` and `-Arr` variants, you can always zoom out using the `.value` method:
 
-```
+```python3
 class MyModel(BaseModel):
     required_prop: Prop['MyModel', int]
     optional_prop: PropOpt['MyModel', str]
@@ -332,13 +332,13 @@ Reframing your array and optional properties in this way can be useful in cases 
 The different property types are also important because they are used in validation. `PropOpt` and `PropOptArr` properties do not need to be provided in constructor arguments to generate a valid models. `PropArr` and `PropOptArr` properties must be lists when provided, and their members will be validated according to the specified type:
 
 ```python3
-valid_1 = MyModel(required_prop=23, array_prop=["hello", "world"])
-valid_2 = MyModel(
+valid_1 = MyModel(
     required_prop=23,
     optional_prop="value",
     array_prop=["hello", "world"],
     opt_arr_prop=[True],
 )
+valid_2 = MyModel(required_prop=23, array_prop=["hello", "world"]) # optional_prop omitted
 invalid = MyModel(
     # Missing required property `required_prop`!
     optional_prop="value",
@@ -347,7 +347,7 @@ invalid = MyModel(
 )
 ```
 
-If you used `Prop['MyModel', str | None]` for `optional_prop` instead of `PropOpt`, you would have to explicitly pass `optional_prop=None` to construct a valid model.
+If you used `Prop['MyModel', str | None]` for `optional_prop` instead of `PropOpt`, you would have to explicitly pass `optional_prop=None` to construct a valid model and `valid_2` would turn out to be *invalid*.
 
 #### Validators
 
@@ -438,7 +438,7 @@ model_instance = MyModel(int_value=23, str_value="hello")
 
 If you try to access `model_instance.int_value`, your IDE/type checker will think you are accessing the `Prop` class attribute, not the `int` object attribute. This is an annoyance if you want to access those object attributes directly, but remember that Pydoptic's design encourages using the `Prop`s themselves to do access the data. The Pydoptic way to retrieve the value we want is to call `MyModel.int_value.get_val(model_instance)`. The result of this expression will be accurately typed as `int`.
 
-It is understandable, however, that given the relative verbosity of the Pydoptic approach, users may not want to use `Prop`s all the time. If it's important to you to have typed object attributes, you can get around the problem by defining your models as follows:
+It is understandable, however, given the relative verbosity of the Pydoptic approach, that users may not want to use `Prop`s all the time. If it's important to you to have typed object attributes, you can get around the problem by defining your models as follows:
 
 ```python3
 class MyModel(BaseModel):
@@ -459,7 +459,7 @@ This approach requires more boilerplate, and you need to take care that your pro
 
 To retrieve a selected value from a complete model, use the `get` method. This will not return the value directly, however. Instead it will return a `SelectValue[B]` (where `B` is the selected data type). A `SelectValue` contains the selected value in an attribute `value`. The type of `value`, however, is not `B` but `B | List[B] | None`. This is because `get` doesn't know if the `Select` in question is any `-Arr` type, or an `-Opt` type, or both, or neither. This is the challenge of using generic `Select`s.
 
-If you happen to know what kind of properties are selected, you can cast as needed, but if you don't, `SelectValue` provides some other useful methods. First, you can find out what type to expect by looking at the `is_opt` and `is_arr` attributes. These can tell you whether to expect an optional or array type. What may be more useful, however, is to coerce the type to a usable value using `as_arr` or `as_opt`. `as_arr` will keep a list result as a list, but it will turn an empty option into an empty list and a non-empty non-list value into a list of length one. This is useful if don't care whether or not there are going to be multiple values and just want to be able to use whatever values you get.
+If you happen to know what kind of properties are selected, you can cast as needed, but if you don't, `SelectValue` provides some other useful methods. First, you can find out what type to expect by looking at the `is_opt` and `is_arr` attributes. These can tell you whether to expect an optional or array type. What may be more useful, however, is to convert the value using `as_arr` or `as_opt`. `as_arr` will keep a list result as a list, but it will turn an empty option into an empty list and a non-empty non-list value into a list of length one. This is useful if don't care whether there are multiple values and just want to use whatever values you get.
 
 Consider, for example, a case where you have a model for an `Organization` and you need to make some kind of remote network request for any point of contact associated with the organization. In this case you can design your logic around a generic selector, without having to know whether it is will return many, one, or no values:
 
@@ -553,7 +553,7 @@ print(prop_select.get(value).value)
 # [2, 3, 4, 5, 6, 7]
 ```
 
-In the example above, `prop_select` selects an `int` across *two* array properties. When we call `update`, the updater applies to every element, regardless of which "branch" of the nested arrays it's in. Pydoptic takes care of think through all of the nesting for you! In some cases, however, we may not want this. Consider the following example were want to an optional property based on whether or not it's empty, and we want to add elements to an array property:
+In the example above, `prop_select` selects an `int` across *two* array properties. When we call `update`, the updater applies to every element, regardless of which "branch" of the nested arrays it's in. Pydoptic takes care of think through all of the nesting for you! In some cases, however, we may not want this. Consider the following example were want to update an optional property based on whether or not it's empty, and we want to add elements to an array property:
 
 ```python3
 class Inner(BaseModel):
@@ -571,21 +571,21 @@ value = Outer(inner=[Inner(prop_arr=[1,2,3]), Inner(prop_arr=[4,5], prop_opt="he
 
 # Add the length of each array to the array
 prop_arr_select.update(value, lambda arr: [*arr, len(arr)])
-# Replace None with "hello" and replace non-empty value with None
+# Replace any `None`s with "hello" and replace any non-empty values with `None`
 prop_opt_select.update(value, lambda opt: if opt is None then "hello" else None)
 
 print(value)
 # Outer(inner=[Inner(prop_arr=[1,2,3,3], prop_opt="hello"), Inner(prop_arr=[4,5,2], prop_opt=None)])
 ```
 
-By using `Select`s that expose the optional and list types by calling `value` on the props, we can have access to the entire list or the entire option in our updater function. Note that `update` requires a pure function: it will replace the existing value with a new value you provide. This is why we to reconstruct the entire list using the spread operator rather than just calling `append` (which mutates the list in place, but returns `None`). This is not always ideal for mutating lists; an alternative way to update `prop_arr` is simply to retrieve all of the lists and then mutate them in a for loop.:
+By using `Select`s that expose the optional and list types by calling `value` on the props, we can have access to the entire list or the entire option in our updater function. Note that `update` requires a pure function: it will replace the existing value with a new value you provide. This is why we need to reconstruct the entire list using the spread operator rather than just calling `append` (which mutates the list in place, but returns `None`). This is not always ideal for mutating lists; an alternative way to update `prop_arr` is simply to retrieve all of the lists and then mutate them in a for loop.:
 
 ```python3
 for arr in prop_arr_select.get(value).as_list:
     arr.append(len(arr))
 ```
 
-To update incomplete data, use `update_unsafe` and `update_safe`. `update_unsafe` will fail if it's unable to access the data to be updated due to invalid data, whereas `update_safe` will simply ignore (and therefore skip) invalid cases. Like `get`, you need to be careful when updating nested models with the partial variants of `update`. The types will appear to be complete models when they are most likely `PartialModel`s or `dict`s.
+To update incomplete data, use `update_unsafe` and `update_safe`. `update_unsafe` will fail with an exception if it's unable to access the data to be updated due to invalid data, whereas `update_safe` will simply ignore (and therefore skip) invalid cases. Like `get`, you need to be careful when updating nested models with the partial variants of `update`. The types will appear to be complete models when they are most likely `PartialModel`s or `dict`s.
 
 
 #### `set`, `set_unsafe`, `set_safe`
@@ -618,7 +618,7 @@ print(value)
 # Outer(inner=[Inner(prop_arr=[7,8,9]), Inner(prop_arr=[7,8,9])])
 ```
 
-Using the regular `Select`, each elemnt of each `prop_arr` is set to `4`. When we use the `Select` based on `Inner.prop_arr.value` instead of `Inner.prop_arr`, we are able to set each `prop_arr` to `[7,8,9]`.
+Using the regular `Select`, each element of each `prop_arr` is set to `4`. When we use the `Select` based on `Inner.prop_arr.value` instead of `Inner.prop_arr`, we are able to set each `prop_arr` to `[7,8,9]`.
 
 `set_unsafe` and `set_safe` work the same way as `update_unsafe` and `update_safe`: the `_unsafe` variant raises `ValueError` when it encounters invalid data whereas the `_safe` variant just skips it.
 
@@ -628,7 +628,7 @@ We have already seen how removing values can be tricky using `Select`. Unless yo
 
 `clear` is designed to be as flexible as possible to make it easy to remove data in a variety of circumstances without having to think much about what `Select` to use. The result of this, however, is that you have to be careful about how you use it since the behavior will changed depending on your model and how your `Select` is constructed. Make sure you understand its behavior before you use it:
 1. `clear` will only remove data on "clearable" properties. Any optional property can be cleared by setting it to `None`, and any array property can be cleared by setting it to an empty array. If a property is an optional array, it is cleared by being set to `None`.
-2. `clear` will try to clear the *selected* property, but if it cannot, it will try to clear the next property the selected property is chained from. If `model.prop_1.prop_2.prop_3` is a required field, for instance, it will try to clear `model.prop_1.prop_2` (and so on).
+2. `clear` will try to clear the *selected* property, but if it can't, it will try to clear the next property the selected property is chained from. If `model.prop_1.prop_2.prop_3` is a required field, for instance, it will try to clear `model.prop_1.prop_2` (and so on).
 3. If none of the properties in the chain are clearable, it will raise a `ValueError`.
 
 ```python3
@@ -686,7 +686,7 @@ req_opt_arr: List[int] | None = Model.opt_arr.get_val(value)
 req_o_a_list: List[int] = Model.opt_arr.get_arr(value)
 ```
 
-In the case of `PropOptArr`, there is also a `get_arr` method which returns a `List[B]` instead of `List[B] | None` for cases where you only want to deal with lists.
+On `PropOptArr` there is also a `get_arr` method which returns a `List[B]` instead of `List[B] | None`, converting `None` to an empty list. This will allow you to iterate over results without a null check.
 
 As always, there are `_unsafe` and `safe` variants of `get_val` and `get_arr` methods for retrieving from partial data. Note that `get_val_safe` returns options, since data can be missing.
 
@@ -707,7 +707,7 @@ a_d_1: Select[A, E] = a_c(d_e)
 a_d_2: Select[A, E] = prop_1(prop_2)(prop_3)(prop_4)
 ```
 
-Note that you will get type errors if you try to chain a `Select[_, X]` with something other than `Select[X, _]`. This will ensure you do not generate invalid `Select`s.
+Note that you will get type errors if you try to chain a `Select[_, X]` with something other than `Select[X, _]`. The one exception is that you can chain `Select[_, X]` with `Select[Y, _]` if `X` is a *subtype* of `Y` (a property on `Y` must be on `X` if `X` is a subtype of `Y`).
 
 Note also that when we chain in this way we get generic `Select`s. It is also possible to chain `Prop`s so that we retain the option/array information at the type level. You can do this by using `then_` variants to specify explicitly what kind of `Prop` or `Select` you are chaining to:
 
@@ -753,7 +753,7 @@ f_h_2: SelectOptArr[F, H] = (
 )
 ```
 
-As we can see from the explicitl type annotations, chaining `Prop`s using `then_X` variants results in different `Select-` types: `SelectVal`, `SelectOpt`, `SelectArr`, and `SelectOptArr`. These specific subtypes are the chained analogies to `Prop`, `PropOpt`, `PropArr`, and `PropOptArr` respectively. Like the `Prop`s, these can be used with `get_val` and `get_arr` to extract values directly with the correct types.
+As we can see from the explicit type annotations, chaining `Prop`s using `then_X` variants results in different `Select-` types: `SelectVal`, `SelectOpt`, `SelectArr`, and `SelectOptArr`. These specific subtypes are the chained analogies to `Prop`, `PropOpt`, `PropArr`, and `PropOptArr` respectively. Like the `Prop`s, these can be used with `get_val` and `get_arr` to extract values directly with the correct types.
 
 #### Discriminating subtypes
 
@@ -765,11 +765,11 @@ class Super(BaseModel):
     prop: Prop['Super', bool]
 
 class Sub1(Super):
-    discr: Discrim[Super, 'Sub1']
+    subtype: Discrim[Super, 'Sub1']
     prop_1: Prop['Sub1', int]
 
 class Sub2(Super):
-    discr: Discrim[Super, 'Sub2']
+    subtype: Discrim[Super, 'Sub2']
     prop_2: Prop['Sub2', str]
 
 class Root(BaseModel):
@@ -777,19 +777,19 @@ class Root(BaseModel):
 
 value = Root(super=[Sub1(prop_1=23), Sub2(prop_2="hello")])
 
-print(Root.super(Sub1.discr)(Sub1.prop_1)(value).value)
+print(Root.super(Sub1.subtype)(Sub1.prop_1)(value).value)
 # [23]
 
-print(Root.super(Sub2.discr)(Sub2.prop_2)(value).value)
+print(Root.super(Sub2.subtype)(Sub2.prop_2)(value).value)
 # ["hello"]
 
-Root.super(Sub1.discr)(Sub1.prop_1).update(value, lambda i: i + 1)
+Root.super(Sub1.subtype)(Sub1.prop_1).update(value, lambda i: i + 1)
 
 print(value)
 # Root(super=[Sub1(prop_1=24), Sub2(prop_2="hello")])
 ```
 
-The `Discr[A, B]` type is a `SelectOpt` that selects down from some value of supertype `B` to a subtype `A`, filtering out cases where it is not that subtype. Note that `Discr` property is treated differently by `BaseModel` than regular properties. It generates a special string attribute `discr` (or whatever the property name is) that is automatically set to the class name of the subtype when a model is constructed. The `Discr` `Select` checks whether this string value matches the class name to conclude it is the correct subtype.
+The `Discr[A, B]` type is a `SelectOpt` that selects down from some value of supertype `B` to a subtype `A`, filtering out cases where it is not that subtype. Note that `Discr` property is treated differently by `BaseModel` than regular properties. It generates a special string attribute `subtype` (or whatever the property name is) that is automatically set to the class name of the subtype when a model is constructed. The `Discr` `Select` checks whether this string value matches the class name to conclude it is the correct subtype.
 
 You can see the discriminator value if you convert a model to a `dict`:
 
@@ -797,14 +797,14 @@ You can see the discriminator value if you convert a model to a `dict`:
 value = Root(super=[Sub1(prop_1=23), Sub2(prop_2="hello")])
 
 print(value.as_mapping_full())
-# {'super': [{'discr': 'Sub1', 'prop_1': 23}, {'discr': 'Sub2', 'prop_2': 'hello'}]}
+# {'super': [{'subtype': 'Sub1', 'prop_1': 23}, {'subtype': 'Sub2', 'prop_2': 'hello'}]}
 ```
 
 ### Integrating with external APIs
 
 In order to use Pydoptic models with data APIs, such as a SQL backend, you will need to introspect models and `Select`s to use them to generate requests. Pydoptic provides several public methods to make this easier.
 
-First, to inspect all the properties in a model, can class `[ClassName].properties()`, which will return a list of all `Prop-` and `Discrim` properties (in order) on the model:
+First, to inspect all the properties in a model, you can call `[ClassName].properties()`, which will return a list of all `Prop-` and `Discrim` properties on the model (in order of definition):
 
 ```python3
 class Model(BaseModel):

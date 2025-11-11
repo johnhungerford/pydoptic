@@ -5,7 +5,7 @@ from elasticsearch import Elasticsearch, NotFoundError
 from pydoptic import BaseModel, Select, PartialModel
 from pydoptic.selector import Prop
 from pydoptic_elastic.elastic_model import M
-from pydoptic_elastic.query import Query
+from pydoptic_elastic.elastic_query import Query
 from pydoptic.base_model import select
 
 class _IndexResponse(BaseModel):
@@ -30,7 +30,7 @@ class ElasticService:
 
     def index(self, document: M, **kwargs) -> str:
         response = self.__client.index(index=document.__class__._get_index_name(), document=document.as_mapping_full(), **kwargs)
-        return _IndexResponse.id.get_val(response.body)
+        return _IndexResponse.id.get_val_unsafe(response.body)
     
     def get(self, cls: Type[M], id: str, **kwargs) -> M | None:
         try:

@@ -480,7 +480,7 @@ def test_partial_model_as_mapping_full_should_be_reversable():
 
     assert model_value == model_value_2
 
-def test_base_model_select_parts_should_generate_partial_model_from_selectors():
+def test_base_model_select_parts_should_generate_partial_model_from_selectors_p():
     model_value = TestModel.partial(
         annotation="str",
         select_val_renamed=1,

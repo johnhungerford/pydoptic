@@ -423,7 +423,7 @@ def test_val_selector_should_get_val_from_model():
     res = sel.get_val(M1(a=M2(b=M3(c=M4(d=23)))))
     assert res == 23
 
-def test_val_selector_should_get_val_safe_and_unsafe_from_partial_model():
+def test_val_selector_should_get_val_safe_and_unsafe_from_partial_model_():
     sel = M1.a.then_val(M2.b).then_val(M3.c).then_val(M4.d)
 
     value_1 = M1.partial(a=M2(b=M3.partial(c=M4(d=23))))
