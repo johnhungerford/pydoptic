@@ -36,7 +36,6 @@ class BaseModelMeta(type):
     def __new__(mcls, class_name, bases, dct: Dict[str, Any]):
         annos: Dict[str, Type[Any]] = dct.get('__annotations__', {})
         slots: List[str] = []
-        print(dct.get('__slots__', None))
         dct['__slots__'] = slots
         for name, tpe in annos.items():
             if isclass(tpe) and issubclass(tpe, PropSelect):
@@ -129,7 +128,6 @@ def _fully_validate(target: Type[M], value: Any, validators: Dict[Type[Any], Val
     elif isinstance(value, dict):
         return target(**value, _validators=validators)
     else:
-        print(f'{target}, {target.__name__}, {value}')
         raise ValueError(f'expected type {target.__name__} (or dict) but received: {type(value).__name__}.')
 
 class BaseModel(ModelLike, metaclass=BaseModelMeta):
@@ -232,7 +230,6 @@ class BaseModel(ModelLike, metaclass=BaseModelMeta):
                                 setattr(self, selector.label, updated_values)
                             else:
                                 try:
-                                    print(selector.target)
                                     valid_value = _fully_validate(selector.target, value, validators)
                                     setattr(self, selector.label, valid_value)
                                 except ValueError as ve:
@@ -280,7 +277,6 @@ class BaseModel(ModelLike, metaclass=BaseModelMeta):
                 else:
                     mapping[name] = value
             except AttributeError:
-                print('hi')
                 ...
         return mapping
 
