@@ -5,7 +5,18 @@ from typing import Any, Generic, List, Sequence, Type, TypeVar, cast
 from pydoptic import PartialModel
 from pydoptic.selector import PropSelect, Prop, PropOpt
 from pydoptic_sql import SqlTable
-from pydoptic_sql.sql_table import ColumnInfo, ColumnType
+from pydoptic_sql.sql_table import (
+    AutoIncrement,
+    Check,
+    ColumnConstraint,
+    ColumnInfo,
+    ColumnType,
+    Default,
+    ForeignKey,
+    ManualColumnConstraint,
+    PrimaryKey,
+    Unique,
+)
 
 A = TypeVar('A')
 TC = TypeVar('TC', bound=SqlTable, contravariant=True)
@@ -75,6 +86,14 @@ class Constraint(Generic[TC]):
     @classmethod
     def like(cls, prop: Prop[TC, A] | PropOpt[TC, A], other: Prop[TC, A] | PropOpt[TC, A] | A) -> 'CompConstraint[TC, A]':
         return CompConstraint(prop, other, Comparison.LIKE)
+
+    @classmethod
+    def between(cls, prop: Prop[TC, A] | PropOpt[TC, A], lower: Prop[TC, A] | PropOpt[TC, A] | A, upper: Prop[TC, A] | PropOpt[TC, A] | A) -> 'BetweenConstraint[TC, A]':
+        return BetweenConstraint(prop, lower, upper)
+
+    @classmethod
+    def in_(cls, prop: Prop[TC, A] | PropOpt[TC, A], values: Sequence[Prop[TC, A] | PropOpt[TC, A] | A]) -> 'InConstraint[TC, A]':
+        return InConstraint(prop, values)
 
     def AND(self, other: 'Constraint[TC]') -> 'AndConstraint[TC]':
         return AndConstraint([self, other])
@@ -168,7 +187,15 @@ class InConstraint(Generic[TC, A], Constraint[TC]):
     values: Sequence[Prop[TC, A] | PropOpt[TC, A] | A]
 
     def to_sql(self) -> str:
-        values = [c.label if isinstance(c, PropSelect) else str(c) for c in self.values]
+        def render(c: Prop[TC, A] | PropOpt[TC, A] | A) -> str:
+            if isinstance(c, PropSelect):
+                return c.label
+            value = str(c)
+            if self.value.target is str:
+                value = "'" + value + "'"
+            return value
+
+        values = [render(c) for c in self.values]
         return f'{self.value.label} IN ({", ".join(values)})'
 
 @dataclass(frozen=True)
@@ -194,6 +221,24 @@ class DropQuery(SqlQuery[TC]):
     def to_sql(self) -> str:
         return f'DROP TABLE {self._model.__name__.lower()};'
 
+def _column_constraint_to_sql(constraint: ColumnConstraint) -> str:
+    if constraint is PrimaryKey:
+        return 'PRIMARY KEY'
+    if constraint is Unique:
+        return 'UNIQUE'
+    if constraint is AutoIncrement:
+        return 'AUTOINCREMENT'
+    if isinstance(constraint, ForeignKey):
+        return f'REFERENCES {constraint.references.origin.__name__.lower()}({constraint.references.label})'
+    if isinstance(constraint, Check):
+        return f'CHECK ({constraint.constraint})'
+    if isinstance(constraint, Default):
+        value_sql = f"'{constraint.value}'" if isinstance(constraint.value, str) else str(constraint.value)
+        return f'DEFAULT {value_sql}'
+    if isinstance(constraint, ManualColumnConstraint):
+        return constraint.type
+    raise ValueError(f'Unknown column constraint: {constraint}')
+
 @dataclass(frozen=True)
 class CreateQuery(SqlQuery[TC]):
     _model: Type[TC]
@@ -209,7 +254,8 @@ class CreateQuery(SqlQuery[TC]):
                 prop_data = cast(ColumnInfo, prop.data)
                 constraints = prop_data['constraints'] if 'constraints' in prop_data else []
                 tpe = prop_data['type'] if 'type' in prop_data else ColumnType.from_type(prop.target)
-                column = f'{prop.label} {tpe.to_sql()}'
+                constraint_sqls = [_column_constraint_to_sql(c) for c in constraints]
+                column = ' '.join([f'{prop.label} {tpe.to_sql()}', *constraint_sqls])
                 columns.append(column)
 
         return header + ',\n'.join(columns) + footer
@@ -220,13 +266,13 @@ class InsertQuery(SqlQuery[TC]):
     row: TC
 
     def to_sql(self) -> str:
-        values: List[str | None] = []
+        values: List[Any] = []
         for prop in self.row.__class__.properties().values():
             if isinstance(prop, Prop):
                 values.append(prop.get_val(self.row))
             elif isinstance(prop, PropOpt):
                 values.append(prop.get_val(self.row))
-        values_sql = ', '.join(f"'{v}'" if isinstance(v, str) else str(v) for v in values) 
+        values_sql = ', '.join('NULL' if v is None else f"'{v}'" if isinstance(v, str) else str(v) for v in values)
         return f'INSERT INTO {self.row.__class__.__name__.lower()} VALUES ({values_sql});'
 
 class JoinType(Enum):
