@@ -705,3 +705,26 @@ def test_opt_arr_selector_should_get_val_safe_and_unsafe_from_dict():
         sel.get_val_unsafe(value_5)
     res_5 = sel.get_val_safe(value_5)
     assert res_5 is None
+
+def test_prop_select_is_hashable():
+    assert hash(Model.nested) == hash(Model.nested)
+    assert hash(Nested.nested) != hash(Model.nested)
+
+def test_linked_select_is_hashable():
+    selector_1 = Model.nested(Nested.nested)(NestedNested.value)
+    selector_2 = Model.nested(Nested.nested)(NestedNested.value)
+    selector_3 = Model.nested(N1.d)(N1.nested)(NestedNested.value)
+
+    assert hash(selector_1) == hash(selector_2)
+    assert selector_1 == selector_2
+    assert hash(selector_1) != hash(selector_3)
+
+def test_discrim_is_hashable():
+    d_1 = N1.d
+    d_2 = N1.d
+    assert hash(d_1) == hash(d_2)
+
+def test_selector_can_be_used_as_dict_key():
+    mapping = {Model.nested: 'a', Nested.nested: 'b'}
+    assert mapping[Model.nested] == 'a'
+    assert mapping[Nested.nested] == 'b'

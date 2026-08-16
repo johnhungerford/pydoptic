@@ -1023,9 +1023,11 @@ class PropSelect(Generic[A, B], Select[A, B]):
     __is_opt: bool
     __is_arr: bool
 
+    __hash__ = Select.__hash__
+
     def __init__(self, l: str, o: Type[A], t: Type[B], d: Dict[str, Any], io: bool, ia: bool):
         raise NotImplementedError('Abstract base class AttributeSelect should not be implemented directly')
-    
+
     def __repr__(self):
         target_name = self.__target.__name__ if isclass(self.__target) else str(self.__target)
         suffix = ' (opt/arr)' if self.__is_opt and self.__is_arr else ' (opt)' if self.__is_opt else ' (arr)' if self.__is_arr else ''
@@ -1105,6 +1107,7 @@ class Prop(Generic[A, B], SelectVal[A, B], PropSelect[A, B]):
     """
     A required, non-array property
     """
+    __hash__ = Select.__hash__
     _is_opt = False
     _is_arr = False
 
@@ -1119,6 +1122,7 @@ class PropOpt(Generic[A, B], PropSelect[A, B], SelectOpt[A, B]):
     """
     An optional, non-array property
     """
+    __hash__ = Select.__hash__
     _is_opt = True
     _is_arr = False
 
@@ -1141,6 +1145,8 @@ class PropArr(Generic[A, B], PropSelect[A, B], SelectArr[A, B]):
     """
     A required, array (or `List`) property
     """
+    __hash__ = Select.__hash__
+
     @property
     def value(self) -> Prop[A, List[B]]:
         """
@@ -1160,6 +1166,8 @@ class PropOptArr(Generic[A, B], PropSelect[A, B], SelectOptArr[A, B]):
     """
     An optional array (or `List`) property
     """
+    __hash__ = Select.__hash__
+
     @property
     def optional(self) -> PropOpt[A, List[B]]:
         """
@@ -1187,6 +1195,8 @@ class PropOptArr(Generic[A, B], PropSelect[A, B], SelectOptArr[A, B]):
 class MatchSelect(Generic[A, B], SelectOpt[A, B]):
     __origin: Type[A]
     __target: Type[B]
+
+    __hash__ = Select.__hash__
 
     def match(self, value: A) -> bool:
         raise NotImplementedError()
@@ -1231,8 +1241,8 @@ class Discrim(Generic[A, B], MatchSelect[A, B]):
         return result # type: ignore[no-any-return]
 
     def __hash__(self):
-        return hash((super(), self.__selector, self.__value))
-    
+        return hash((self.origin, self.target, self.__selector, self.__value))
+
     def __repr__(self):
         return super().__repr__()
 
@@ -1240,6 +1250,8 @@ class Discrim(Generic[A, B], MatchSelect[A, B]):
 class LinkedSelect(Generic[A, B, C], Select[A, C]):
     select_1: Select[A, B]
     select_2: PropSelect[B, C] | MatchSelect
+
+    __hash__ = Select.__hash__
 
     @property
     def origin(self) -> Type[A]:
@@ -1263,20 +1275,28 @@ class LinkedSelect(Generic[A, B, C], Select[A, C]):
 
 @dataclass(frozen=True)
 class LinkedSelectVal(Generic[A, B, C], LinkedSelect[A, B, C], SelectVal[A, C]):
+    __hash__ = Select.__hash__
+
     def __repr__(self):
         return super().__repr__()
 
 @dataclass(frozen=True)
 class LinkedSelectOpt(Generic[A, B, C], LinkedSelect[A, B, C], SelectOpt[A, C]):
+    __hash__ = Select.__hash__
+
     def __repr__(self):
         return super().__repr__()
 
 @dataclass(frozen=True)
 class LinkedSelectArr(Generic[A, B, C], LinkedSelect[A, B, C], SelectArr[A, C]):
+    __hash__ = Select.__hash__
+
     def __repr__(self):
         return super().__repr__()
 
 @dataclass(frozen=True)
 class LinkedSelectOptArr(Generic[A, B, C], LinkedSelect[A, B, C], SelectOptArr[A, C]):
+    __hash__ = Select.__hash__
+
     def __repr__(self):
         return super().__repr__()
