@@ -2,12 +2,12 @@
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, Generic, Iterator, List, Sequence, Tuple, Type
+from typing import Any, Dict, Generic, Iterator, List, Sequence, Tuple, Type, cast
 
 from pydoptic.base_model import PartialModel
 from pydoptic.selector import PropSelect
 from pydoptic_sql import SqlQuery
-from pydoptic_sql.sql_query import TC, SelectQuery
+from pydoptic_sql.sql_query import TC, R, SelectQuery
 
 from psycopg import Connection, Cursor
 
@@ -17,11 +17,11 @@ class SqlClient:
     def open(self) -> Iterator['SqlTransaction']:
         raise NotImplementedError()
 
-class SqlResponse(Generic[TC]):
-    def fetchone(self) -> PartialModel[TC] | None:
+class SqlResponse(Generic[R]):
+    def fetchone(self) -> R | None:
         raise NotImplementedError()
-    
-    def stream(self) -> Iterator[PartialModel[TC]]:
+
+    def stream(self) -> Iterator[R]:
         raise NotImplementedError()
 
 class SqlTransaction:
@@ -30,23 +30,23 @@ class SqlTransaction:
 
     def rollback(self) -> None:
         raise NotImplementedError()
-    
+
     def close(self) -> None:
         raise NotImplementedError()
-    
-    def execute(self, query: SqlQuery[TC]) -> SqlResponse[TC]:
+
+    def execute(self, query: SqlQuery[R]) -> SqlResponse[R]:
         raise NotImplementedError()
 
-class EmptyPgSqlResponse(SqlResponse[TC]):
-    def fetchone(self) -> PartialModel[TC] | None:
+class EmptyPgSqlResponse(SqlResponse[R]):
+    def fetchone(self) -> R | None:
         return None
-    
-    def stream(self) -> Iterator[PartialModel[TC]]:
-        seq: Sequence[PartialModel[TC]] = []
+
+    def stream(self) -> Iterator[R]:
+        seq: Sequence[R] = []
         return iter(seq)
 
 @dataclass
-class PsycoPgSqlResponse(SqlResponse[TC]):
+class PsycoPgSqlResponse(Generic[TC], SqlResponse[PartialModel[TC]]):
     model: Type[TC]
     cursor: Cursor
     selection: List[PropSelect[TC, Any]]
@@ -81,11 +81,13 @@ class PsycoPgSqlTransaction(SqlTransaction):
     def close(self) -> None:
         self.cursor.close()
     
-    def execute(self, query: SqlQuery[TC]) -> SqlResponse[TC]:
+    def execute(self, query: SqlQuery[R]) -> SqlResponse[R]:
         self.cursor.execute(query.to_sql())
         match query:
             case SelectQuery():
-                return PsycoPgSqlResponse(query._model, self.cursor, query._selection)
+                # SelectQuery[TC]'s R is always PartialModel[TC], which is exactly the caller's R here,
+                # but match narrowing can't invert R back to TC to prove that statically.
+                return cast(SqlResponse[R], PsycoPgSqlResponse(query._model, self.cursor, query._selection))
             case _:
                 return EmptyPgSqlResponse()
 

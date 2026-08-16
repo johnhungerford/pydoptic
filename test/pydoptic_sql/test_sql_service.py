@@ -17,7 +17,7 @@ def test_create_query_table():
             try:
                 tx.execute(SqlQuery.create(MyTable))
 
-                res = tx.execute(SqlQuery[MyTable].select(MyTable.prop_1, MyTable.prop_2))
+                res = tx.execute(SqlQuery.select(MyTable.prop_1, MyTable.prop_2))
                 value = res.fetchone()
                 assert value is None
             finally:
@@ -32,14 +32,14 @@ def test_create_create_insert_query():
             with pg_client.open() as tx:
                 tx.execute(SqlQuery.create(MyTable))
 
-                tx.execute(SqlQuery[MyTable].insert(MyTable.construct(
+                tx.execute(SqlQuery.insert(MyTable.construct(
                     MyTable.prop_1.param(50),
                     MyTable.prop_2.param('some text'),
                     MyTable.prop_3.param(True),
                 )))
 
                 res = tx.execute(
-                    SqlQuery[MyTable]
+                    SqlQuery
                     .select(MyTable.prop_1, MyTable.prop_2, MyTable.prop_3)
                     .where(Constraint.eq(MyTable.prop_2, 'some text'))
                 )

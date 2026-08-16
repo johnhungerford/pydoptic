@@ -265,19 +265,19 @@ def test_delete_query_uses_model_name_not_column_names():
 # --- SELECT (basic shape) ---
 
 def test_select_query_single_column():
-    query = SqlQuery[Table].select(Table.prop_1)
+    query = SqlQuery.select(Table.prop_1)
 
     assert query.to_sql() == 'SELECT prop_1 FROM table;'
 
 
 def test_select_query_multiple_columns():
-    query = SqlQuery[Employee].select(Employee.id, Employee.name, Employee.age)
+    query = SqlQuery.select(Employee.id, Employee.name, Employee.age)
 
     assert query.to_sql() == 'SELECT id, name, age FROM employee;'
 
 
 def test_select_query_without_where_omits_where_clause():
-    query = SqlQuery[Table].select(Table.prop_1, Table.prop_2)
+    query = SqlQuery.select(Table.prop_1, Table.prop_2)
 
     assert query.to_sql() == 'SELECT prop_1, prop_2 FROM table;'
 
@@ -290,7 +290,7 @@ def test_select_query_requires_at_least_one_selected_property():
 
 
 def test_simply_select_query():
-    query: SqlQuery[Table] = SqlQuery[Table].select(
+    query: SelectQuery[Table] = SqlQuery.select(
         Table.prop_1,
         Table.prop_2,
     ).where(
@@ -462,7 +462,7 @@ def test_constraint_in_factory_with_string_values():
 # --- SELECT combined with rich WHERE clauses ---
 
 def test_select_query_with_between_constraint():
-    query = SqlQuery[Employee].select(Employee.name, Employee.age).where(
+    query = SqlQuery.select(Employee.name, Employee.age).where(
         BetweenConstraint(Employee.age, 20, 30),
     )
 
@@ -470,7 +470,7 @@ def test_select_query_with_between_constraint():
 
 
 def test_select_query_with_in_constraint():
-    query = SqlQuery[Employee].select(Employee.name).where(
+    query = SqlQuery.select(Employee.name).where(
         InConstraint(Employee.age, [20, 30, 40]),
     )
 
@@ -478,7 +478,7 @@ def test_select_query_with_in_constraint():
 
 
 def test_select_query_with_nested_and_or_not_constraints():
-    query = SqlQuery[Employee].select(Employee.id, Employee.name).where(
+    query = SqlQuery.select(Employee.id, Employee.name).where(
         Constraint.all(
             Constraint.any(
                 Constraint.eq(Employee.name, 'Alice'),
@@ -494,7 +494,7 @@ def test_select_query_with_nested_and_or_not_constraints():
 
 
 def test_select_query_where_replaces_previous_where():
-    base = SqlQuery[Employee].select(Employee.id).where(Constraint.eq(Employee.age, 1))
+    base = SqlQuery.select(Employee.id).where(Constraint.eq(Employee.age, 1))
     updated = base.where(Constraint.eq(Employee.age, 2))
 
     assert base.to_sql() == 'SELECT id FROM employee WHERE age = 1;'

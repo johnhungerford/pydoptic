@@ -19,10 +19,12 @@ from pydoptic_sql.sql_table import (
 )
 
 A = TypeVar('A')
+R = TypeVar('R')
 TC = TypeVar('TC', bound=SqlTable, contravariant=True)
 TC1 = TypeVar('TC1', bound=SqlTable, contravariant=True)
 
-class SqlQuery(Generic[TC]):
+class SqlQuery(Generic[R]):
+    # R is the result type of executing the query (e.g. PartialModel[TC], or None); table type(s) are tracked separately per subclass.
     def to_sql(self) -> str:
         raise NotImplementedError()
     
@@ -207,7 +209,7 @@ class InConstraint(Generic[TC, A], Constraint[TC]):
         return f'{self.value.label} IN ({", ".join(values)})'
 
 @dataclass(frozen=True)
-class SelectQuery(SqlQuery[TC]):
+class SelectQuery(Generic[TC], SqlQuery[PartialModel[TC]]):
     _model: Type[TC]
     _selection: List[PropSelect[TC, Any]]
     _where: Constraint[TC] | None = None
@@ -223,7 +225,7 @@ class SelectQuery(SqlQuery[TC]):
         return f'SELECT {selections} FROM {table_name}{where_clause};'
 
 @dataclass
-class DropQuery(SqlQuery[TC]):
+class DropQuery(Generic[TC], SqlQuery[None]):
     _model: Type[TC]
 
     def to_sql(self) -> str:
@@ -254,7 +256,7 @@ def _column_constraint_to_sql(constraint: ColumnConstraint) -> str:
     raise ValueError(f'Unknown column constraint: {constraint}')
 
 @dataclass(frozen=True)
-class CreateQuery(SqlQuery[TC]):
+class CreateQuery(Generic[TC], SqlQuery[None]):
     _model: Type[TC]
 
     def to_sql(self) -> str:
@@ -276,7 +278,7 @@ class CreateQuery(SqlQuery[TC]):
 
 
 @dataclass(frozen=True)
-class InsertQuery(SqlQuery[TC]):
+class InsertQuery(Generic[TC], SqlQuery[None]):
     row: TC
 
     def to_sql(self) -> str:
@@ -290,7 +292,7 @@ class InsertQuery(SqlQuery[TC]):
         return f'INSERT INTO {self.row.__class__.__name__.lower()} VALUES ({values_sql});'
 
 @dataclass(frozen=True)
-class UpdateQuery(SqlQuery[TC]):
+class UpdateQuery(Generic[TC], SqlQuery[None]):
     _model: Type[TC]
     _values: List[Param[TC, Any]]
     _where: Constraint[TC] | None = None
@@ -305,7 +307,7 @@ class UpdateQuery(SqlQuery[TC]):
         return f'UPDATE {self._model.__name__.lower()} SET {assignments}{where_clause};'
 
 @dataclass(frozen=True)
-class DeleteQuery(SqlQuery[TC]):
+class DeleteQuery(Generic[TC], SqlQuery[None]):
     _model: Type[TC]
     _where: Constraint[TC] | None = None
 
