@@ -22,4 +22,4 @@ def test_simply_select_query():
         ),
     )
 
-    assert query.to_sql() == 'SELECT prop_1, prop_2 FROM table WHERE (prop_2 LIKE "hello" AND prop_1 <= 235);'
+    assert query.to_sql() == 'SELECT prop_1, prop_2 FROM table WHERE (prop_2 LIKE \'hello\' AND prop_1 <= 235);'
