@@ -18,5 +18,4 @@ data
 rsdnconfig/*.yml
 !rsdnconfig/dev.yml
 !rsdnconfig/test.yml
-benchmarks
 data
