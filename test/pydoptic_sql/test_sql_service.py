@@ -5,9 +5,9 @@ import psycopg
 from pydoptic_sql.sql_service import PsycoPgSqlClient
 
 class MyTable(SqlTable):
-    prop_1: Prop['SqlTable', int] = column(type=ColumnType.BIGINT(), constraints=[PrimaryKey])
-    prop_2: Prop['SqlTable', str] = column(type=ColumnType.TEXT())
-    prop_3: Prop['SqlTable', bool]
+    prop_1: Prop['MyTable', int] = column(type=ColumnType.BIGINT(), constraints=[PrimaryKey])
+    prop_2: Prop['MyTable', str] = column(type=ColumnType.TEXT())
+    prop_3: Prop['MyTable', bool]
 
 def test_create_query_table():
     with psycopg.connect("host=localhost port=5432 dbname=pydoptic user=postgres password=password") as conn:
