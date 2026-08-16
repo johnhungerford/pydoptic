@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Generic, List, Sequence, Type, TypeVar, cast
 from pydoptic import PartialModel
-from pydoptic.selector import PropSelect, Prop, PropOpt
+from pydoptic.selector import PropSelect, Prop, PropOpt, Param
 from pydoptic_sql import SqlTable
 from pydoptic_sql.sql_table import (
     AutoIncrement,
@@ -45,7 +45,15 @@ class SqlQuery(Generic[TC]):
     @classmethod
     def insert(cls, row: TC) -> 'InsertQuery[TC]':
         return InsertQuery(row)
-    
+
+    @classmethod
+    def update(cls, table: Type[TC], value: Param[TC, Any], *values: Param[TC, Any]) -> 'UpdateQuery[TC]':
+        return UpdateQuery(table, [value, *values])
+
+    @classmethod
+    def delete(cls, table: Type[TC]) -> 'DeleteQuery[TC]':
+        return DeleteQuery(table)
+
 
 class Constraint(Generic[TC]):
     def to_sql(self) -> str:
@@ -221,6 +229,13 @@ class DropQuery(SqlQuery[TC]):
     def to_sql(self) -> str:
         return f'DROP TABLE {self._model.__name__.lower()};'
 
+def _sql_literal(value: Any) -> str:
+    if value is None:
+        return 'NULL'
+    if isinstance(value, str):
+        return "'" + value + "'"
+    return str(value)
+
 def _column_constraint_to_sql(constraint: ColumnConstraint) -> str:
     if constraint is PrimaryKey:
         return 'PRIMARY KEY'
@@ -233,8 +248,7 @@ def _column_constraint_to_sql(constraint: ColumnConstraint) -> str:
     if isinstance(constraint, Check):
         return f'CHECK ({constraint.constraint})'
     if isinstance(constraint, Default):
-        value_sql = f"'{constraint.value}'" if isinstance(constraint.value, str) else str(constraint.value)
-        return f'DEFAULT {value_sql}'
+        return f'DEFAULT {_sql_literal(constraint.value)}'
     if isinstance(constraint, ManualColumnConstraint):
         return constraint.type
     raise ValueError(f'Unknown column constraint: {constraint}')
@@ -272,8 +286,35 @@ class InsertQuery(SqlQuery[TC]):
                 values.append(prop.get_val(self.row))
             elif isinstance(prop, PropOpt):
                 values.append(prop.get_val(self.row))
-        values_sql = ', '.join('NULL' if v is None else f"'{v}'" if isinstance(v, str) else str(v) for v in values)
+        values_sql = ', '.join(_sql_literal(v) for v in values)
         return f'INSERT INTO {self.row.__class__.__name__.lower()} VALUES ({values_sql});'
+
+@dataclass(frozen=True)
+class UpdateQuery(SqlQuery[TC]):
+    _model: Type[TC]
+    _values: List[Param[TC, Any]]
+    _where: Constraint[TC] | None = None
+
+    def where(self, constraint: Constraint[TC]) -> 'UpdateQuery[TC]':
+        return UpdateQuery(self._model, self._values, constraint)
+
+    def to_sql(self) -> str:
+        assert len(self._values) > 0, 'You must set at least one value'
+        assignments = ', '.join(f'{p.label} = {_sql_literal(p.value)}' for p in self._values)
+        where_clause = '' if self._where is None else (' WHERE ' + self._where.to_sql())
+        return f'UPDATE {self._model.__name__.lower()} SET {assignments}{where_clause};'
+
+@dataclass(frozen=True)
+class DeleteQuery(SqlQuery[TC]):
+    _model: Type[TC]
+    _where: Constraint[TC] | None = None
+
+    def where(self, constraint: Constraint[TC]) -> 'DeleteQuery[TC]':
+        return DeleteQuery(self._model, constraint)
+
+    def to_sql(self) -> str:
+        where_clause = '' if self._where is None else (' WHERE ' + self._where.to_sql())
+        return f'DELETE FROM {self._model.__name__.lower()}{where_clause};'
 
 class JoinType(Enum):
     Left = 'LEFT'

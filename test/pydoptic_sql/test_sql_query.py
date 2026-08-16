@@ -3,7 +3,7 @@ from datetime import date, datetime
 import pytest
 
 from pydoptic_sql import SqlTable, ColumnType, PrimaryKey, AutoIncrement, column, SqlQuery, Constraint
-from pydoptic_sql.sql_query import BetweenConstraint, InConstraint, SelectQuery
+from pydoptic_sql.sql_query import BetweenConstraint, InConstraint, SelectQuery, UpdateQuery
 from pydoptic import Prop, PropOpt
 
 
@@ -172,6 +172,94 @@ def test_insert_query_with_missing_optional_property():
     query = SqlQuery.insert(row)
 
     assert query.to_sql() == "INSERT INTO employee VALUES (2, 'Bob', 40, 2000.0, False, NULL);"
+
+
+# --- UPDATE ---
+
+def test_update_query_single_value():
+    query = SqlQuery.update(Employee, Employee.salary.param(2500.0))
+
+    assert query.to_sql() == 'UPDATE employee SET salary = 2500.0;'
+
+
+def test_update_query_multiple_values():
+    query = SqlQuery.update(Employee, Employee.salary.param(2500.0), Employee.active.param(True))
+
+    assert query.to_sql() == 'UPDATE employee SET salary = 2500.0, active = True;'
+
+
+def test_update_query_quotes_string_values():
+    query = SqlQuery.update(Employee, Employee.name.param('Alice'))
+
+    assert query.to_sql() == "UPDATE employee SET name = 'Alice';"
+
+
+def test_update_query_with_where_clause():
+    query = SqlQuery.update(Employee, Employee.salary.param(2500.0)).where(
+        Constraint.eq(Employee.id, 1),
+    )
+
+    assert query.to_sql() == 'UPDATE employee SET salary = 2500.0 WHERE id = 1;'
+
+
+def test_update_query_sets_optional_property_to_null():
+    query = SqlQuery.update(Employee, Employee.department.param(None))
+
+    assert query.to_sql() == 'UPDATE employee SET department = NULL;'
+
+
+def test_update_query_where_replaces_previous_where():
+    base = SqlQuery.update(Employee, Employee.salary.param(2500.0)).where(Constraint.eq(Employee.id, 1))
+    updated = base.where(Constraint.eq(Employee.id, 2))
+
+    assert base.to_sql() == 'UPDATE employee SET salary = 2500.0 WHERE id = 1;'
+    assert updated.to_sql() == 'UPDATE employee SET salary = 2500.0 WHERE id = 2;'
+
+
+def test_update_query_requires_at_least_one_value():
+    query = UpdateQuery(Employee, [])
+
+    with pytest.raises(AssertionError):
+        query.to_sql()
+
+
+# --- DELETE ---
+
+def test_delete_query_without_where():
+    query = SqlQuery.delete(Employee)
+
+    assert query.to_sql() == 'DELETE FROM employee;'
+
+
+def test_delete_query_with_where_clause():
+    query = SqlQuery.delete(Employee).where(Constraint.eq(Employee.id, 1))
+
+    assert query.to_sql() == 'DELETE FROM employee WHERE id = 1;'
+
+
+def test_delete_query_with_rich_where_clause():
+    query = SqlQuery.delete(Employee).where(
+        Constraint.all(
+            Constraint.lt(Employee.age, 18),
+            Constraint.eq(Employee.active, False),
+        ),
+    )
+
+    assert query.to_sql() == 'DELETE FROM employee WHERE (age < 18 AND active = False);'
+
+
+def test_delete_query_where_replaces_previous_where():
+    base = SqlQuery.delete(Employee).where(Constraint.eq(Employee.id, 1))
+    updated = base.where(Constraint.eq(Employee.id, 2))
+
+    assert base.to_sql() == 'DELETE FROM employee WHERE id = 1;'
+    assert updated.to_sql() == 'DELETE FROM employee WHERE id = 2;'
+
+
+def test_delete_query_uses_model_name_not_column_names():
+    query = SqlQuery.delete(Table)
+
+    assert query.to_sql() == 'DELETE FROM table;'
 
 
 # --- SELECT (basic shape) ---
