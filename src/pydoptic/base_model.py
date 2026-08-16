@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pydoptic.selector import Discrim, Param, Prop, Select, PropSelect, SelectVal, SelectOpt, SelectArr, SelectOptArr, ModelLike, SelectValue, A, B, Selectable
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from inspect import isclass
 from typing import Any, Callable, Dict, Generic, List, Self, Set, Type, TypeVar, TypedDict, get_args, get_origin, \
     get_type_hints, Mapping, Tuple
@@ -15,9 +15,40 @@ Y = TypeVar("Y")
 class SelectProxy(Generic[B]):
     name: str | None
     data: Dict[str, Any]
+    _field_name: str | None = field(default=None, compare=False, repr=False)
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        object.__setattr__(self, '_field_name', name)
+
+    def __get__(self, instance: Any, owner: type) -> Any:
+        """
+        A customized field (`x: Prop[...] = select(...)`) already has a real class-attribute value (this proxy)
+        from class-body execution, so plain attribute lookup on it would never "fail" and never reach
+        `BaseModelMeta.__getattr__`'s fallback trigger. Implementing the descriptor protocol here lets an
+        unresolved customized field trigger resolution on first access the same way -- since it's a *non-data*
+        descriptor (no `__set__`), it never interferes with normal instance attribute access, and once resolved
+        it's replaced in-place by the real `Prop`/`Discrim`, so this only ever runs once per class.
+        """
+        _resolve_properties(owner)
+        return getattr(owner, self._field_name)
 
 def select(name: str | None = None, **data) -> Any:
     return SelectProxy(name=name, data=data)
+
+_MISSING = object()
+
+def _find_given_value(cls: Type[Any], name: str) -> Any:
+    """
+    Look up a class-body-assigned value for `name` by walking the MRO directly via each class's own `__dict__`,
+    bypassing the attribute-access protocol (`getattr`/`hasattr`) entirely. This matters specifically because
+    `SelectProxy.__get__` triggers resolution on access: calling `getattr` here, from inside the resolution of
+    `cls` itself, would recurse right back into resolving the very field being looked up. Returns `_MISSING` if
+    `name` isn't set anywhere in the MRO (as opposed to being explicitly set to `None`).
+    """
+    for base in cls.__mro__:
+        if name in base.__dict__:
+            return base.__dict__[name]
+    return _MISSING
 
 def _selector_from_select_proxy(name: str, select_type: Type[Select[Any, Any]], origin: Type[Any], target: Type[Any], proxy: SelectProxy) -> PropSelect[Any, Any]:
     if issubclass(select_type, SelectVal):
@@ -60,8 +91,8 @@ def _resolve_properties(cls: Type[Any]) -> Dict[str, PropSelect[Any, Any] | Disc
             assert len(type_params) == 2, f'Selector {name} on model {cls_name} has more than three type paramaters: {_type}'
             assert issubclass(cls, type_params[0]), f'Selector {name} on model {cls_name} selects from {type_params[0]} instead of {cls_name}: {_type}'
             target = type_params[1]
-            if hasattr(cls, name):
-                given_selector: Any = getattr(cls, name)
+            given_selector: Any = _find_given_value(cls, name)
+            if given_selector is not _MISSING:
                 if given_selector is not None:
                     if isinstance(given_selector, SelectProxy):
                         if given_selector.name is not None and given_selector.name != name:
@@ -86,8 +117,8 @@ def _resolve_properties(cls: Type[Any]) -> Dict[str, PropSelect[Any, Any] | Disc
             assert issubclass(cls, type_params[0]), f'Selector {name} on model {cls_name} selects from {type_params[0]} instead of {cls_name}: {_type}'
             super_class = type_params[0]
             target = type_params[1]
-            if hasattr(cls, name):
-                given_selector = getattr(cls, name)
+            given_selector = _find_given_value(cls, name)
+            if given_selector is not _MISSING:
                 if given_selector is not None:
                     if isinstance(given_selector, SelectProxy):
                         prop = _selector_from_select_proxy(name, Prop, cls, str, given_selector)
