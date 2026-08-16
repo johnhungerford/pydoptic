@@ -8,9 +8,10 @@ from pydoptic import Prop, PropOpt
 
 
 class Table(SqlTable):
-    prop_1: Prop['Table', int] = column(type=ColumnType.BIGINT(), constraints=[PrimaryKey])
+    prop_1: Prop['Table', int] = column(type=ColumnType.BIGINT(), constraints=[PrimaryKey, AutoIncrement])
     prop_2: Prop['Table', str] = column(type=ColumnType.TEXT())
     prop_3: Prop['Table', bool]
+    prop_4: PropOpt['Table', str] = column()
 
 
 class Employee(SqlTable):
@@ -59,7 +60,14 @@ class UnsupportedColumnType(SqlTable):
 def test_create_table_query():
     query = SqlQuery.create(Table)
 
-    assert query.to_sql() == 'CREATE TABLE table (\nprop_1 BIGINT,\nprop_2 TEXT,\nprop_3 BOOLEAN\n);'
+    assert query.to_sql() == (
+        'CREATE TABLE table (\n'
+        'prop_1 BIGINT PRIMARY KEY AUTOINCREMENT,\n'
+        'prop_2 TEXT,\n'
+        'prop_3 BOOLEAN,\n'
+        'prop_4 TEXT\n'
+        ');'
+    )
 
 
 def test_create_table_query_with_explicit_column_types():
@@ -149,7 +157,7 @@ def test_insert_query_quotes_only_string_values():
 
     query = SqlQuery.insert(row)
 
-    assert query.to_sql() == "INSERT INTO table VALUES (235, 'hello', False);"
+    assert query.to_sql() == "INSERT INTO table VALUES (235, 'hello', False, NULL);"
 
 
 def test_insert_query_with_missing_optional_property():
@@ -163,7 +171,7 @@ def test_insert_query_with_missing_optional_property():
 
     query = SqlQuery.insert(row)
 
-    assert query.to_sql() == "INSERT INTO employee VALUES (2, 'Bob', 40, 2000.0, False, None);"
+    assert query.to_sql() == "INSERT INTO employee VALUES (2, 'Bob', 40, 2000.0, False, NULL);"
 
 
 # --- SELECT (basic shape) ---
@@ -335,6 +343,32 @@ def test_in_constraint_with_single_value():
     constraint = InConstraint(Employee.age, [20])
 
     assert constraint.to_sql() == 'age IN (20)'
+
+
+def test_in_constraint_quotes_string_values():
+    constraint = InConstraint(Employee.name, ['Alice', 'Bob'])
+
+    assert constraint.to_sql() == "name IN ('Alice', 'Bob')"
+
+
+# --- Constraint factory methods for between/in ---
+
+def test_constraint_between_factory():
+    constraint = Constraint.between(Employee.age, 20, 30)
+
+    assert constraint.to_sql() == 'age BETWEEN 20 AND 30'
+
+
+def test_constraint_in_factory_with_numeric_values():
+    constraint = Constraint.in_(Employee.age, [20, 30, 40])
+
+    assert constraint.to_sql() == 'age IN (20, 30, 40)'
+
+
+def test_constraint_in_factory_with_string_values():
+    constraint = Constraint.in_(Employee.name, ['Alice', 'Bob'])
+
+    assert constraint.to_sql() == "name IN ('Alice', 'Bob')"
 
 
 # --- SELECT combined with rich WHERE clauses ---
