@@ -32,6 +32,81 @@ def _selector_from_select_proxy(name: str, select_type: Type[Select[Any, Any]], 
     raise ValueError(f'Unsupported subtype of Select: {select_type.__name__}. Use Prop, PropOpt, PropArr, or PropOptArr')
 
 
+def _resolve_properties(cls: Type[Any]) -> Dict[str, PropSelect[Any, Any] | Discrim[Any, Any]]:
+    """
+    Build (and cache, in `BaseModel._properties`) the `Prop`/`Discrim` selectors for `cls`, based on its type hints.
+
+    Deferred until first use (rather than done in `BaseModelMeta.__new__`) because `get_type_hints` requires that
+    every type referenced in an annotation -- including forward references, e.g. a model that refers to another
+    model defined later in the same module, or two models that refer to each other -- already be resolvable. That's
+    only guaranteed once the whole defining module has finished executing, which first use is (definition never is).
+
+    Idempotent: safe to call repeatedly (e.g. from both `BaseModel.properties()` and `BaseModelMeta.__getattr__`);
+    a class is only ever resolved once.
+    """
+    if cls in BaseModel._properties:
+        return BaseModel._properties[cls]
+
+    properties: Dict[str, PropSelect[Any, Any] | Discrim[Any, Any]] = {}
+    BaseModel._properties[cls] = properties
+
+    cls_name = cls.__name__
+    type_hints = get_type_hints(cls, include_extras=True)
+    for name, _type in type_hints.items():
+        origin = get_origin(_type)
+        type_params = get_args(_type)
+        if isclass(origin) and issubclass(origin, PropSelect):
+            assert len(type_params) > 1, f'Selector {name} on model {cls_name} is missing one or more of the three required type paramaters: {_type}'
+            assert len(type_params) == 2, f'Selector {name} on model {cls_name} has more than three type paramaters: {_type}'
+            assert issubclass(cls, type_params[0]), f'Selector {name} on model {cls_name} selects from {type_params[0]} instead of {cls_name}: {_type}'
+            target = type_params[1]
+            if hasattr(cls, name):
+                given_selector: Any = getattr(cls, name)
+                if given_selector is not None:
+                    if isinstance(given_selector, SelectProxy):
+                        if given_selector.name is not None and given_selector.name != name:
+                            if given_selector.name in type_hints:
+                                attr_typ = type_hints[given_selector.name]
+                                if not isclass(attr_typ) and issubclass(attr_typ, target):
+                                    raise ValueError(f'Attribute {given_selector.name} with type {attr_typ.__name__} does not correspond to property {name} with type {target}')
+                        property = _selector_from_select_proxy(name, origin, cls, target, given_selector)
+                    elif isinstance(given_selector, PropSelect):
+                        property = given_selector
+                    else:
+                        raise ValueError(f'Invalid selector assigned to {name}: {given_selector}')
+                else:
+                    raise ValueError(f'To configure a selector on {cls_name} use select(), select_opt(), select_arr(), or select_arr()')
+            else:
+                property = _selector_from_select_proxy(name, origin, cls, target, SelectProxy(None, {}))
+            setattr(cls, name, property)
+            properties[property.label] = property
+        elif isclass(origin) and issubclass(origin, Discrim):
+            assert len(type_params) > 1, f'Discriminator {name} on model {cls_name} is missing one or more of the three required type paramaters: {_type}'
+            assert len(type_params) == 2, f'Discriminator {name} on model {cls_name} has more than three type paramaters: {_type}'
+            assert issubclass(cls, type_params[0]), f'Selector {name} on model {cls_name} selects from {type_params[0]} instead of {cls_name}: {_type}'
+            super_class = type_params[0]
+            target = type_params[1]
+            if hasattr(cls, name):
+                given_selector = getattr(cls, name)
+                if given_selector is not None:
+                    if isinstance(given_selector, SelectProxy):
+                        prop = _selector_from_select_proxy(name, Prop, cls, str, given_selector)
+                        discrim = Discrim(super_class, target, prop, target.__name__)
+                    elif isinstance(given_selector, Discrim):
+                        discrim = given_selector
+                    else:
+                        raise ValueError(f'Invalid selector assigned to {name}: {given_selector}')
+                else:
+                    raise ValueError(f'To configure a selector on {cls_name} use select(), select_opt(), select_arr(), or select_arr()')
+            else:
+                prop = _selector_from_select_proxy(name, Prop, cls, str, SelectProxy(None, {}))
+                discrim = Discrim(super_class, target, prop, target.__name__)
+            setattr(cls, name, discrim)
+            properties[discrim.property.label] = discrim
+
+    return properties
+
+
 class BaseModelMeta(type):
     def __new__(mcls, class_name, bases, dct: Dict[str, Any]):
         annos: Dict[str, Type[Any]] = dct.get('__annotations__', {})
@@ -50,72 +125,16 @@ class BaseModelMeta(type):
         # Call the parent metaclass's __new__ to create the class
         return super().__new__(mcls, class_name, bases, dct)
 
-    def __getattribute__(cls, name_to_get: str):
-        if cls is not BaseModel:
-            try:
-                global_properties: Dict[Type[Any], Dict[str, PropSelect[Any, Any] | Discrim[Any, Any]]] = type.__getattribute__(BaseModel, '_properties')
-            except AttributeError:
-                global_properties = {}
-                setattr(BaseModel, '_properties', {})
-
-            if cls not in global_properties:
-                properties: Dict[str, PropSelect[Any, Any] | Discrim[Any, Any]] = {}
-                global_properties[cls] = properties
-
-                cls_name = cls.__name__
-                type_hints = get_type_hints(cls, include_extras=True)
-                for name, _type in type_hints.items():
-                    origin = get_origin(_type)
-                    type_params = get_args(_type)
-                    if isclass(origin) and issubclass(origin, PropSelect):
-                        assert len(type_params) > 1, f'Selector {name} on model {cls_name} is missing one or more of the three required type paramaters: {_type}'
-                        assert len(type_params) == 2, f'Selector {name} on model {cls_name} has more than three type paramaters: {_type}'
-                        assert issubclass(cls, type_params[0]), f'Selector {name} on model {cls_name} selects from {type_params[0]} instead of {cls_name}: {_type}'
-                        target = type_params[1]
-                        if hasattr(cls, name):
-                            given_selector: Any = getattr(cls, name)
-                            if given_selector is not None:
-                                if isinstance(given_selector, SelectProxy):
-                                    if given_selector.name is not None and given_selector.name != name:
-                                        if given_selector.name in type_hints:
-                                            attr_typ = type_hints[given_selector.name]
-                                            if not isclass(attr_typ) and issubclass(attr_typ, target):
-                                                raise ValueError(f'Attribute {given_selector.name} with type {attr_typ.__name__} does not correspond to property {name} with type {target}')
-                                    property = _selector_from_select_proxy(name, origin, cls, target, given_selector)
-                                elif isinstance(given_selector, PropSelect):
-                                    property = given_selector
-                                else:
-                                    raise ValueError(f'Invalid selector assigned to {name}: {given_selector}')
-                            else:
-                                raise ValueError(f'To configure a selector on {cls_name} use select(), select_opt(), select_arr(), or select_arr()')
-                        else:
-                            property = _selector_from_select_proxy(name, origin, cls, target, SelectProxy(None, {}))
-                        setattr(cls, name, property)
-                        properties[property.label] = property
-                    elif isclass(origin) and issubclass(origin, Discrim):
-                        assert len(type_params) > 1, f'Discriminator {name} on model {cls_name} is missing one or more of the three required type paramaters: {_type}'
-                        assert len(type_params) == 2, f'Discriminator {name} on model {cls_name} has more than three type paramaters: {_type}'
-                        assert issubclass(cls, type_params[0]), f'Selector {name} on model {cls_name} selects from {type_params[0]} instead of {cls_name}: {_type}'
-                        super_class = type_params[0]
-                        target = type_params[1]
-                        if hasattr(cls, name):
-                            given_selector = getattr(cls, name)
-                            if given_selector is not None:
-                                if isinstance(given_selector, SelectProxy):
-                                    prop = _selector_from_select_proxy(name, Prop, cls, str, given_selector)
-                                    discrim = Discrim(super_class, target, prop, target.__name__)
-                                elif isinstance(given_selector, Discrim):
-                                    discrim = given_selector
-                                else:
-                                    raise ValueError(f'Invalid selector assigned to {name}: {given_selector}')
-                            else:
-                                raise ValueError(f'To configure a selector on {cls_name} use select(), select_opt(), select_arr(), or select_arr()')
-                        else:
-                            prop = _selector_from_select_proxy(name, Prop, cls, str, SelectProxy(None, {}))
-                            discrim = Discrim(super_class, target, prop, target.__name__)
-                        setattr(cls, name, discrim)
-                        properties[discrim.property.label] = discrim
-
+    def __getattr__(cls, name_to_get: str):
+        """
+        Fallback for a `Prop`/`Discrim`-annotated field accessed directly on the class (e.g. `Model.field`) before
+        `Model.properties()` has ever been called (which is the common trigger, via `__init__`). Only runs on a
+        failed lookup -- i.e. essentially only the first time, ever, for a given class -- since a resolved field
+        becomes a real class attribute findable by plain (fast, unintercepted) attribute lookup from then on.
+        """
+        if cls is BaseModel:
+            raise AttributeError(name_to_get)
+        _resolve_properties(cls)
         return type.__getattribute__(cls, name_to_get)
 
 def _fully_validate(target: Type[M], value: Any, validators: Dict[Type[Any], Validator]) -> M:
@@ -142,7 +161,12 @@ class BaseModel(ModelLike, metaclass=BaseModelMeta):
 
     Can include class attribute `validators` to specify how certain types should be validated.
     """
-    _properties: Dict[Type[Any], Dict[str, PropSelect[Any, Any] | Discrim[Any, Any]]]
+    _properties: Dict[Type[Any], Dict[str, PropSelect[Any, Any] | Discrim[Any, Any]]] = {}
+    """
+    Registry of resolved selectors, keyed by model class. Shared across all `BaseModel` subclasses; populated
+    lazily (see `_resolve_properties`) since resolving a class's selectors requires its forward references to
+    already be resolvable, which is only guaranteed once its defining module has finished executing.
+    """
     validators: Dict[Type[Any], Validator]
     """
     Table for looking up validation functions by type.
@@ -153,6 +177,8 @@ class BaseModel(ModelLike, metaclass=BaseModelMeta):
         """
         All the selectors for this subclass
         """
+        if cls not in BaseModel._properties:
+            _resolve_properties(cls)
         return BaseModel._properties[cls]
 
     @classmethod

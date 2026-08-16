@@ -23,3 +23,6 @@ types = [
     "mypy~=1.18.2",
     "types-jsonschema~=4.25.1"
 ]
+benchmark = [
+    "pydantic~=2.11",
+]

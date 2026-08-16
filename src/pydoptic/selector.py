@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import cached_property
 from inspect import isclass
-from typing import Any, Callable, Dict, Generic, List, Mapping, Set, Tuple, Type, TypeVar, cast, Optional
+from typing import Any, Callable, Dict, Generic, List, Mapping, NamedTuple, Set, Tuple, Type, TypeVar, cast, Optional
 
 A = TypeVar('A', contravariant=True)
 B = TypeVar('B')
@@ -47,12 +47,14 @@ class Selectable(Generic[C], ModelLike):
     """
     
 
-@dataclass(frozen=True)
-class SelectValue(Generic[A]):
+class SelectValue(NamedTuple, Generic[A]):
     """
     Represents the result of retrieving nested data, whether a single value, a missing value, or multiple values.
     Boolean flags indicate whether the value might be missing or is a list type, as determined by the `Select` types
     that retrieve it.
+
+    Implemented as a `NamedTuple` (rather than a frozen dataclass) since it is constructed on every `get`/`get_val`
+    call and never compared for equality; `NamedTuple` construction is significantly cheaper.
     """
     value: A | List[A] | None
     is_opt: bool
@@ -232,62 +234,21 @@ class Select(Generic[A, B]):
     def get_unsafe(self, target: Selectable[A] | Dict[str, Any]) -> SelectValue[B]:
         """
         Retrieve the selected value from potentially incomplete data. Raises `ValueError` if the value is inaccessible due to invalid data.
-        """
 
-        match self:
-            case PropSelect():
-                if isinstance(target, ModelLike):
-                    try:
-                        result = getattr(target, self.label)
-                    except AttributeError:
-                        if self.is_opt:
-                            result = None
-                        else:
-                            raise ValueError(f'Unexpected empty value for required property {self.label}')
-                elif isinstance(target, dict):
-                    result = target.get(self.label)
-                else:
-                    raise ValueError(f'Value must be partial model or dict')
-                if result is None and not self.is_opt:
-                    raise ValueError(f'Unexpected empty value for attribute {self.label}')
-                if result is not None and self.is_arr and not isinstance(result, list):
-                    raise ValueError(f'Array selector returned non-array value: {result}')
-                return SelectValue(result, self.is_opt, self.is_arr)
-            case MatchSelect():
-                if self.match_partial(target):
-                    return SelectValue(cast(B, target), True, False)
-                return SelectValue(None, True, False)
-            case LinkedSelect(select_1=select_1, select_2=select_2):
-                result = select_1.get_unsafe(target).flat_map(lambda b: select_2.get_unsafe(b))
-                return result
-            case _:
-                raise ValueError()
+        Implemented per-subtype (see `PropSelect.get_unsafe`, `MatchSelect.get_unsafe`, `LinkedSelect.get_unsafe`) rather than dispatching
+        on `self`'s shape here, since that dispatch happens on every single call and virtual method dispatch is measurably cheaper than
+        repeated `isinstance` checks, especially for deeply chained selects.
+        """
+        raise NotImplementedError()
 
     def get(self, target: A) -> SelectValue[B]:
         """
         Retrieve the selected value from complete, validated data.
+
+        Implemented per-subtype (see `PropSelect.get`, `MatchSelect.get`, `LinkedSelect.get`) rather than dispatching on `self`'s shape
+        here, for the same reason as `get_unsafe`.
         """
-        
-        match self:
-            case PropSelect():
-                if isinstance(target, ModelLike):
-                    result = getattr(target, self.label)
-                else:
-                    raise ValueError(f'Value must be model')
-                if result is None and not self.is_opt:
-                    raise ValueError(f'Unexpected empty value for attribute {self.label}')
-                if result is not None and self.is_arr and not isinstance(result, list):
-                    raise ValueError(f'Array selector returned non-array value: {result}')
-                return SelectValue(result, self.is_opt, self.is_arr)
-            case MatchSelect():
-                if self.match(target):
-                    return SelectValue(cast(B, target), True, False)
-                return SelectValue(None, True, False)
-            case LinkedSelect(select_1=select_1, select_2=select_2):
-                result = select_1.get(target).flat_map(lambda b: select_2.get(b))
-                return result
-            case _:
-                raise ValueError()
+        raise NotImplementedError()
 
     def set_safe(self, target: Selectable[A] | Dict[str, Any], value: B):
         """
@@ -1014,7 +975,7 @@ class SelectOptArr(Generic[A, B], Select[A, B]):
             case _:
                 raise ValueError()
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PropSelect(Generic[A, B], Select[A, B]):
     __label: str
     __origin: Type[A]
@@ -1067,6 +1028,36 @@ class PropSelect(Generic[A, B], Select[A, B]):
     def target(self) -> Type[B]:
         return self.__target
 
+    def get_unsafe(self, target: Selectable[A] | Dict[str, Any]) -> SelectValue[B]:
+        if isinstance(target, ModelLike):
+            try:
+                result = getattr(target, self.__label)
+            except AttributeError:
+                if self.__is_opt:
+                    result = None
+                else:
+                    raise ValueError(f'Unexpected empty value for required property {self.__label}')
+        elif isinstance(target, dict):
+            result = target.get(self.__label)
+        else:
+            raise ValueError(f'Value must be partial model or dict')
+        if result is None and not self.__is_opt:
+            raise ValueError(f'Unexpected empty value for attribute {self.__label}')
+        if result is not None and self.__is_arr and not isinstance(result, list):
+            raise ValueError(f'Array selector returned non-array value: {result}')
+        return SelectValue(result, self.__is_opt, self.__is_arr)
+
+    def get(self, target: A) -> SelectValue[B]:
+        if isinstance(target, ModelLike):
+            result = getattr(target, self.__label)
+        else:
+            raise ValueError(f'Value must be model')
+        if result is None and not self.__is_opt:
+            raise ValueError(f'Unexpected empty value for attribute {self.__label}')
+        if result is not None and self.__is_arr and not isinstance(result, list):
+            raise ValueError(f'Array selector returned non-array value: {result}')
+        return SelectValue(result, self.__is_opt, self.__is_arr)
+
     @classmethod
     def val(cls, _label: str, _origin: Type[A], _target: Type[B], _data: Dict[str, Any]) -> Prop[A, B]:
         """
@@ -1095,12 +1086,12 @@ class PropSelect(Generic[A, B], Select[A, B]):
         """
         return PropOptArr(_label, _origin, _target, _data, True, True) # type: ignore
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Param(Generic[A, B]):
     label: str
     value: B
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Prop(Generic[A, B], SelectVal[A, B], PropSelect[A, B]):
     """
     A required, non-array property
@@ -1110,11 +1101,11 @@ class Prop(Generic[A, B], SelectVal[A, B], PropSelect[A, B]):
 
     def param(self, value: B) -> Param[A, B]:
         return Param(self.label, value)
-    
-    def __repr__(self):
-        return super().__repr__()
 
-@dataclass(frozen=True)
+    def __repr__(self):
+        return super(Prop, self).__repr__()
+
+@dataclass(frozen=True, slots=True)
 class PropOpt(Generic[A, B], PropSelect[A, B], SelectOpt[A, B]):
     """
     An optional, non-array property
@@ -1132,11 +1123,11 @@ class PropOpt(Generic[A, B], PropSelect[A, B], SelectOpt[A, B]):
     
     def param(self, value: B | None) -> Param[A, B | None]:
         return Param(self.label, value)
-    
-    def __repr__(self):
-        return super().__repr__()
 
-@dataclass(frozen=True)
+    def __repr__(self):
+        return super(PropOpt, self).__repr__()
+
+@dataclass(frozen=True, slots=True)
 class PropArr(Generic[A, B], PropSelect[A, B], SelectArr[A, B]):
     """
     A required, array (or `List`) property
@@ -1151,11 +1142,11 @@ class PropArr(Generic[A, B], PropSelect[A, B], SelectArr[A, B]):
     
     def param(self, value: List[B]) -> Param[A, List[B]]:
         return Param(self.label, value)
-    
-    def __repr__(self):
-        return super().__repr__()
 
-@dataclass(frozen=True)
+    def __repr__(self):
+        return super(PropArr, self).__repr__()
+
+@dataclass(frozen=True, slots=True)
 class PropOptArr(Generic[A, B], PropSelect[A, B], SelectOptArr[A, B]):
     """
     An optional array (or `List`) property
@@ -1178,12 +1169,12 @@ class PropOptArr(Generic[A, B], PropSelect[A, B], SelectOptArr[A, B]):
     
     def param(self, value: List[B] | None) -> Param[A, List[B] | None]:
         return Param(self.label, value)
-    
+
     def __repr__(self):
-        return super().__repr__()
+        return super(PropOptArr, self).__repr__()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MatchSelect(Generic[A, B], SelectOpt[A, B]):
     __origin: Type[A]
     __target: Type[B]
@@ -1201,12 +1192,22 @@ class MatchSelect(Generic[A, B], SelectOpt[A, B]):
     @property
     def target(self) -> Type[B]:
         return self.__target
-    
+
+    def get_unsafe(self, target: Selectable[A] | Dict[str, Any]) -> SelectValue[B]:
+        if self.match_partial(target):
+            return SelectValue(cast(B, target), True, False)
+        return SelectValue(None, True, False)
+
+    def get(self, target: A) -> SelectValue[B]:
+        if self.match(target):
+            return SelectValue(cast(B, target), True, False)
+        return SelectValue(None, True, False)
+
     def __repr__(self):
         target_name = self.__target.__name__ if isclass(self.__target) else str(self.__target)
         return f'{self.__origin.__name__} ~> {target_name}'
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Discrim(Generic[A, B], MatchSelect[A, B]):
     __selector: PropSelect[A, Any]
     __value: Any
@@ -1231,12 +1232,12 @@ class Discrim(Generic[A, B], MatchSelect[A, B]):
         return result # type: ignore[no-any-return]
 
     def __hash__(self):
-        return hash((super(), self.__selector, self.__value))
-    
-    def __repr__(self):
-        return super().__repr__()
+        return hash((super(Discrim, self), self.__selector, self.__value))
 
-@dataclass(frozen=True)
+    def __repr__(self):
+        return super(Discrim, self).__repr__()
+
+@dataclass(frozen=True, slots=True)
 class LinkedSelect(Generic[A, B, C], Select[A, C]):
     select_1: Select[A, B]
     select_2: PropSelect[B, C] | MatchSelect
@@ -1248,7 +1249,55 @@ class LinkedSelect(Generic[A, B, C], Select[A, C]):
     @property
     def target(self) -> Type[C]:
         return self.select_2.target
-    
+
+    @cached_property
+    def _simple_chain_labels(self) -> Tuple[str, ...] | None:
+        """
+        If every segment of this chain is a required (non-opt, non-arr) property -- i.e. no discriminators and no
+        optional/array properties, which could each require branching or short-circuiting -- returns the ordered
+        attribute labels for a flat, non-branching `getattr` walk. Otherwise `None`, meaning the general recursive
+        `flat_map`-based traversal is needed.
+        """
+        segments = self.segments
+        properties = self.properties
+        if len(segments) != len(properties):
+            return None
+        if any(p.is_opt or p.is_arr for p in properties):
+            return None
+        return tuple(p.label for p in properties)
+
+    def get_unsafe(self, target: Selectable[A] | Dict[str, Any]) -> SelectValue[C]:
+        labels = self._simple_chain_labels
+        if labels is not None:
+            result: Any = target
+            for label in labels:
+                if isinstance(result, ModelLike):
+                    try:
+                        result = getattr(result, label)
+                    except AttributeError:
+                        result = None
+                elif isinstance(result, dict):
+                    result = result.get(label)
+                else:
+                    raise ValueError(f'Value must be partial model or dict')
+                if result is None:
+                    raise ValueError(f'Unexpected empty value for attribute {label}')
+            return SelectValue(cast(C, result), False, False)
+        return self.select_1.get_unsafe(target).flat_map(lambda b: self.select_2.get_unsafe(b))
+
+    def get(self, target: A) -> SelectValue[C]:
+        labels = self._simple_chain_labels
+        if labels is not None:
+            if not isinstance(target, ModelLike):
+                raise ValueError(f'Value must be model')
+            result: Any = target
+            for label in labels:
+                result = getattr(result, label)
+                if result is None:
+                    raise ValueError(f'Unexpected empty value for attribute {label}')
+            return SelectValue(cast(C, result), False, False)
+        return self.select_1.get(target).flat_map(lambda b: self.select_2.get(b))
+
     def __repr__(self):
         next: str
         match self.select_2:
@@ -1261,22 +1310,22 @@ class LinkedSelect(Generic[A, B, C], Select[A, C]):
                 next = f' ~> {target_name}'
         return str(self.select_1) + next
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class LinkedSelectVal(Generic[A, B, C], LinkedSelect[A, B, C], SelectVal[A, C]):
     def __repr__(self):
-        return super().__repr__()
+        return super(LinkedSelectVal, self).__repr__()
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class LinkedSelectOpt(Generic[A, B, C], LinkedSelect[A, B, C], SelectOpt[A, C]):
     def __repr__(self):
-        return super().__repr__()
+        return super(LinkedSelectOpt, self).__repr__()
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class LinkedSelectArr(Generic[A, B, C], LinkedSelect[A, B, C], SelectArr[A, C]):
     def __repr__(self):
-        return super().__repr__()
+        return super(LinkedSelectArr, self).__repr__()
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class LinkedSelectOptArr(Generic[A, B, C], LinkedSelect[A, B, C], SelectOptArr[A, C]):
     def __repr__(self):
-        return super().__repr__()
+        return super(LinkedSelectOptArr, self).__repr__()
