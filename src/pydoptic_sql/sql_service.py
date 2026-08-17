@@ -7,7 +7,7 @@ from typing import Any, Dict, Generic, Iterator, List, Sequence, Tuple, Type, ca
 from pydoptic.base_model import PartialModel
 from pydoptic.selector import PropSelect
 from pydoptic_sql import SqlQuery
-from pydoptic_sql.sql_query import TC, TC1, R, SelectQuery, JoinQuery
+from pydoptic_sql.sql_query import TC, TC1, R, Query, Query2
 
 from psycopg import Connection, Cursor
 
@@ -111,11 +111,11 @@ class PsycoPgSqlTransaction(SqlTransaction):
     def execute(self, query: SqlQuery[R]) -> SqlResponse[R]:
         self.cursor.execute(query.to_sql())
         match query:
-            case SelectQuery():
-                # SelectQuery[TC]'s R is always PartialModel[TC], which is exactly the caller's R here,
+            case Query():
+                # Query[TC]'s R is always PartialModel[TC], which is exactly the caller's R here,
                 # but match narrowing can't invert R back to TC to prove that statically.
                 return cast(SqlResponse[R], PsycoPgSqlResponse(query._model, self.cursor, query._selection))
-            case JoinQuery():
+            case Query2():
                 assert query._selection is not None
                 return cast(SqlResponse[R], PsycoPgJoinResponse(query.table1, query.table2, self.cursor, query._selection))
             case _:

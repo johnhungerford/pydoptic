@@ -2,8 +2,9 @@ from datetime import date, datetime
 
 import pytest
 
-from pydoptic_sql import SqlTable, ColumnType, PrimaryKey, AutoIncrement, column, SqlQuery, Constraint
-from pydoptic_sql.sql_query import BetweenConstraint, InConstraint, SelectQuery, UpdateQuery, JoinQuery, JoinType
+from pydoptic_sql import SqlTable, ColumnType, PrimaryKey, AutoIncrement, column, SqlQuery, Constraint, Constraint2
+from pydoptic_sql.sql_constraint import BetweenConstraint, InConstraint, BetweenConstraint2, InConstraint2
+from pydoptic_sql.sql_query import Query, UpdateQuery, Query2, JoinType
 from pydoptic import Prop, PropOpt
 
 
@@ -58,6 +59,7 @@ class UnsupportedColumnType(SqlTable):
 class Department(SqlTable):
     id: Prop['Department', int] = column(type=ColumnType.BIGINT(), constraints=[PrimaryKey])
     name: Prop['Department', str] = column(type=ColumnType.TEXT())
+    min_age: Prop['Department', int] = column(type=ColumnType.INT())
 
 
 class Worker(SqlTable):
@@ -295,14 +297,14 @@ def test_select_query_without_where_omits_where_clause():
 
 
 def test_select_query_requires_at_least_one_selected_property():
-    query = SelectQuery(Table, [], None)
+    query = Query(Table, [], None)
 
     with pytest.raises(AssertionError):
         query.to_sql()
 
 
 def test_simply_select_query():
-    query: SelectQuery[Table] = SqlQuery.select(
+    query: Query[Table] = SqlQuery.select(
         Table.prop_1,
         Table.prop_2,
     ).where(
@@ -513,38 +515,69 @@ def test_select_query_where_replaces_previous_where():
     assert updated.to_sql() == 'SELECT id FROM employee WHERE age = 2;'
 
 
-# --- constraint qualification (used for joins) ---
 
-def test_constraint_to_sql_unqualified_by_default():
-    assert Constraint.eq(Worker.age, 30).to_sql() == 'age = 30'
+# --- Constraint2 (constraints spanning two joined tables) ---
 
-
-def test_comp_constraint_qualified():
-    assert Constraint.eq(Worker.age, 30).to_sql(qualify=True) == 'worker.age = 30'
+def test_constraint2_always_qualifies_columns():
+    assert Constraint2.eq(Worker.age, 30).to_sql() == 'worker.age = 30'
 
 
-def test_comp_constraint_qualified_column_to_column():
-    assert Constraint.eq(Worker.age, Worker.id).to_sql(qualify=True) == 'worker.age = worker.id'
+def test_constraint2_compares_columns_across_both_tables():
+    assert Constraint2[Worker, Department].gte(Worker.age, Department.min_age).to_sql() == 'worker.age >= department.min_age'
 
 
-def test_between_constraint_qualified():
-    assert BetweenConstraint(Worker.age, 20, 30).to_sql(qualify=True) == 'worker.age BETWEEN 20 AND 30'
+def test_constraint2_quotes_string_literal_values():
+    assert Constraint2.eq(Department.name, 'Engineering').to_sql() == "department.name = 'Engineering'"
 
 
-def test_in_constraint_qualified():
-    assert InConstraint(Worker.age, [20, 30]).to_sql(qualify=True) == 'worker.age IN (20, 30)'
-
-
-def test_and_or_not_constraints_propagate_qualify():
-    constraint = Constraint.all(
-        Constraint.eq(Worker.age, 30),
-        Constraint.eq(Worker.name, 'Alice').NOT,
+def test_constraint2_and_combines_constraints_from_both_tables():
+    constraint: Constraint2[Worker, Department] = Constraint2.all(
+        Constraint2.gt(Worker.age, 30),
+        Constraint2.eq(Department.name, 'Engineering'),
     )
 
-    assert constraint.to_sql(qualify=True) == "(worker.age = 30 AND NOT (worker.name = 'Alice'))"
+    assert constraint.to_sql() == "(worker.age > 30 AND department.name = 'Engineering')"
 
 
-# --- JOIN ---
+def test_constraint2_or_combines_constraints_from_both_tables():
+    constraint: Constraint2[Worker, Department] = Constraint2.any(
+        Constraint2.eq(Worker.name, 'Alice'),
+        Constraint2.eq(Department.name, 'Engineering'),
+    )
+
+    assert constraint.to_sql() == "(worker.name = 'Alice' OR department.name = 'Engineering')"
+
+
+def test_constraint2_not():
+    constraint = Constraint2[Worker, Department].eq(Worker.age, 30).NOT
+
+    assert constraint.to_sql() == 'NOT (worker.age = 30)'
+
+
+def test_constraint2_and_or_method_chaining():
+    constraint = Constraint2[Worker, Department].gt(Worker.age, 30).AND(Constraint2.eq(Department.name, 'Engineering'))
+
+    assert constraint.to_sql() == "(worker.age > 30 AND department.name = 'Engineering')"
+
+
+def test_between_constraint2_with_columns_from_both_tables():
+    constraint: BetweenConstraint2[Worker, Department, int] = BetweenConstraint2(Worker.age, Department.min_age, 65)
+
+    assert constraint.to_sql() == 'worker.age BETWEEN department.min_age AND 65'
+
+
+def test_in_constraint2():
+    constraint: InConstraint2[Worker, Department, int] = InConstraint2(Worker.age, [20, 30, 40])
+
+    assert constraint.to_sql() == 'worker.age IN (20, 30, 40)'
+
+
+def test_constraint2_between_and_in_factories():
+    assert Constraint2[Worker, Department].between(Worker.age, Department.min_age, 65).to_sql() == 'worker.age BETWEEN department.min_age AND 65'
+    assert Constraint2[Worker, Department].in_(Worker.age, [20, 30]).to_sql() == 'worker.age IN (20, 30)'
+
+
+# --- JOIN (Query2) ---
 
 def test_join_query_inner():
     query = SqlQuery.join_inner(Worker, Department).columns(Worker.name, Department.name).on(
@@ -566,11 +599,11 @@ def test_join_query_left():
     )
 
 
-def test_join_query_with_where_left():
+def test_join_query_with_where():
     query = SqlQuery.join_inner(Worker, Department).columns(Worker.name, Department.name).on(
         Worker.department_id, Department.id,
-    ).where_left(
-        Constraint.gt(Worker.age, 30),
+    ).where(
+        Constraint2.gt(Worker.age, 30),
     )
 
     assert query.to_sql() == (
@@ -579,52 +612,38 @@ def test_join_query_with_where_left():
     )
 
 
-def test_join_query_with_where_right():
+def test_join_query_where_can_combine_constraints_from_both_tables():
     query = SqlQuery.join_inner(Worker, Department).columns(Worker.name, Department.name).on(
         Worker.department_id, Department.id,
-    ).where_right(
-        Constraint.eq(Department.name, 'Engineering'),
-    )
-
-    assert query.to_sql() == (
-        "SELECT worker.name, department.name FROM worker INNER JOIN department "
-        "ON worker.department_id = department.id WHERE department.name = 'Engineering';"
-    )
-
-
-def test_join_query_with_where_left_and_right():
-    query = SqlQuery.join_inner(Worker, Department).columns(Worker.name, Department.name).on(
-        Worker.department_id, Department.id,
-    ).where_left(
-        Constraint.gt(Worker.age, 30),
-    ).where_right(
-        Constraint.eq(Department.name, 'Engineering'),
-    )
-
-    assert query.to_sql() == (
-        "SELECT worker.name, department.name FROM worker INNER JOIN department "
-        "ON worker.department_id = department.id WHERE worker.age > 30 AND department.name = 'Engineering';"
-    )
-
-
-def test_join_query_with_compound_where():
-    query = SqlQuery.join_inner(Worker, Department).columns(Worker.name).on(
-        Worker.department_id, Department.id,
-    ).where_left(
-        Constraint.all(
-            Constraint.gt(Worker.age, 30),
-            Constraint.eq(Worker.name, 'Alice'),
+    ).where(
+        Constraint2.all(
+            Constraint2.gt(Worker.age, 30),
+            Constraint2.eq(Department.name, 'Engineering'),
         ),
     )
 
     assert query.to_sql() == (
-        "SELECT worker.name FROM worker INNER JOIN department ON worker.department_id = department.id "
-        "WHERE (worker.age > 30 AND worker.name = 'Alice');"
+        "SELECT worker.name, department.name FROM worker INNER JOIN department "
+        "ON worker.department_id = department.id WHERE (worker.age > 30 AND department.name = 'Engineering');"
+    )
+
+
+def test_join_query_where_can_compare_columns_across_tables_directly():
+    # This is exactly what where_left/where_right couldn't express: a predicate that references both tables at once.
+    query = SqlQuery.join_inner(Worker, Department).columns(Worker.name).on(
+        Worker.department_id, Department.id,
+    ).where(
+        Constraint2.gte(Worker.age, Department.min_age),
+    )
+
+    assert query.to_sql() == (
+        'SELECT worker.name FROM worker INNER JOIN department ON worker.department_id = department.id '
+        'WHERE worker.age >= department.min_age;'
     )
 
 
 def test_join_query_requires_columns():
-    query = JoinQuery(JoinType.Inner, Worker, Department).on(Worker.department_id, Department.id)
+    query = Query2(JoinType.Inner, Worker, Department).on(Worker.department_id, Department.id)
 
     with pytest.raises(AssertionError):
         query.to_sql()
@@ -637,11 +656,11 @@ def test_join_query_requires_on():
         query.to_sql()
 
 
-def test_join_query_where_left_and_where_right_replace_previous_value():
+def test_join_query_where_replaces_previous_where():
     base = SqlQuery.join_inner(Worker, Department).columns(Worker.name).on(
         Worker.department_id, Department.id,
-    ).where_left(Constraint.eq(Worker.age, 1))
-    updated = base.where_left(Constraint.eq(Worker.age, 2))
+    ).where(Constraint2.eq(Worker.age, 1))
+    updated = base.where(Constraint2.eq(Worker.age, 2))
 
     assert base.to_sql() == (
         'SELECT worker.name FROM worker INNER JOIN department ON worker.department_id = department.id '
