@@ -1,7 +1,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Generic, List, Sequence, Type, TypeVar, cast
+from typing import Any, Generic, List, Sequence, Tuple, Type, TypeVar, cast
 from pydoptic import PartialModel
 from pydoptic.selector import PropSelect, Prop, PropOpt, Param
 from pydoptic_sql import SqlTable
@@ -31,11 +31,15 @@ class SqlQuery(Generic[R]):
     @classmethod
     def select(cls, sel: PropSelect[TC, Any], *sels: PropSelect[TC, Any]) -> 'SelectQuery[TC]':
         return SelectQuery(sel.origin, [sel, *sels], None)
-    
-    # @classmethod
-    # def join_left(cls, table: TC1) -> 'JoinQuery'[TC, TC1]:
-    #     return JoinQuery(JoinType.Left, table)
-    
+
+    @classmethod
+    def join_left(cls, table1: Type[TC], table2: Type[TC1]) -> 'JoinQuery[TC, TC1]':
+        return JoinQuery(JoinType.Left, table1, table2)
+
+    @classmethod
+    def join_inner(cls, table1: Type[TC], table2: Type[TC1]) -> 'JoinQuery[TC, TC1]':
+        return JoinQuery(JoinType.Inner, table1, table2)
+
     @classmethod
     def create(cls, table: Type[TC]) -> 'CreateQuery[TC]':
         return CreateQuery(table)
@@ -57,8 +61,11 @@ class SqlQuery(Generic[R]):
         return DeleteQuery(table)
 
 
+def _qualified_label(prop: PropSelect[Any, Any], qualify: bool) -> str:
+    return f'{prop.origin.__name__.lower()}.{prop.label}' if qualify else prop.label
+
 class Constraint(Generic[TC]):
-    def to_sql(self) -> str:
+    def to_sql(self, qualify: bool = False) -> str:
         raise NotImplementedError()
 
     @classmethod
@@ -119,22 +126,22 @@ class Constraint(Generic[TC]):
 class OrConstraint(Constraint[TC]):
     constraints: List[Constraint[TC]]
 
-    def to_sql(self) -> str:
-        return '(' + ' OR '.join(c.to_sql() for c in self.constraints) + ')'
+    def to_sql(self, qualify: bool = False) -> str:
+        return '(' + ' OR '.join(c.to_sql(qualify) for c in self.constraints) + ')'
 
 @dataclass(frozen=True)
 class AndConstraint(Constraint[TC]):
     constraints: List[Constraint[TC]]
 
-    def to_sql(self) -> str:
-        return '(' + ' AND '.join(c.to_sql() for c in self.constraints) + ')'
+    def to_sql(self, qualify: bool = False) -> str:
+        return '(' + ' AND '.join(c.to_sql(qualify) for c in self.constraints) + ')'
 
 @dataclass(frozen=True)
 class NotConstraint(Constraint[TC]):
     constraint: Constraint[TC]
 
-    def to_sql(self) -> str:
-        return 'NOT (' + self.constraint.to_sql() + ')'
+    def to_sql(self, qualify: bool = False) -> str:
+        return 'NOT (' + self.constraint.to_sql(qualify) + ')'
 
 class Comparison(Enum):
     EQ = 1
@@ -151,7 +158,7 @@ class CompConstraint(Generic[TC, A], Constraint[TC]):
     value_2: Prop[TC, A] | PropOpt[TC, A] | A
     comp: Comparison
 
-    def to_sql(self) -> str:
+    def to_sql(self, qualify: bool = False) -> str:
         comp_str: str = ''
         match self.comp:
             case Comparison.EQ:
@@ -168,11 +175,14 @@ class CompConstraint(Generic[TC, A], Constraint[TC]):
                 comp_str = 'LIKE'
             case Comparison.NE:
                 comp_str = '<>'
-                
-        value_2 = self.value_2.label if isinstance(self.value_2, PropSelect) else str(self.value_2)
-        if self.value_1.target is str and not isinstance(self.value_2, PropSelect):
-            value_2 = "'" + value_2 + "'"
-        return self.value_1.label + ' ' + comp_str + ' ' + value_2
+
+        if isinstance(self.value_2, PropSelect):
+            value_2 = _qualified_label(self.value_2, qualify)
+        else:
+            value_2 = str(self.value_2)
+            if self.value_1.target is str:
+                value_2 = "'" + value_2 + "'"
+        return _qualified_label(self.value_1, qualify) + ' ' + comp_str + ' ' + value_2
 
 @dataclass(frozen=True)
 class BetweenConstraint(Generic[TC, A], Constraint[TC]):
@@ -180,33 +190,33 @@ class BetweenConstraint(Generic[TC, A], Constraint[TC]):
     lower: Prop[TC, A] | PropOpt[TC, A] | A
     upper: Prop[TC, A] | PropOpt[TC, A] | A
 
-    def to_sql(self) -> str:
+    def to_sql(self, qualify: bool = False) -> str:
         if isinstance(self.lower, PropSelect):
-            lower = self.lower.label 
+            lower = _qualified_label(self.lower, qualify)
         else:
             lower = str(self.lower)
         if isinstance(self.upper, PropSelect):
-            upper = self.upper.label 
+            upper = _qualified_label(self.upper, qualify)
         else:
             upper = str(self.upper)
-        return f'{self.value.label} BETWEEN {lower} AND {upper}'
+        return f'{_qualified_label(self.value, qualify)} BETWEEN {lower} AND {upper}'
 
 @dataclass(frozen=True)
 class InConstraint(Generic[TC, A], Constraint[TC]):
     value: Prop[TC, A] | PropOpt[TC, A]
     values: Sequence[Prop[TC, A] | PropOpt[TC, A] | A]
 
-    def to_sql(self) -> str:
+    def to_sql(self, qualify: bool = False) -> str:
         def render(c: Prop[TC, A] | PropOpt[TC, A] | A) -> str:
             if isinstance(c, PropSelect):
-                return c.label
+                return _qualified_label(c, qualify)
             value = str(c)
             if self.value.target is str:
                 value = "'" + value + "'"
             return value
 
         values = [render(c) for c in self.values]
-        return f'{self.value.label} IN ({", ".join(values)})'
+        return f'{_qualified_label(self.value, qualify)} IN ({", ".join(values)})'
 
 @dataclass(frozen=True)
 class SelectQuery(Generic[TC], SqlQuery[PartialModel[TC]]):
@@ -323,7 +333,7 @@ class JoinType(Enum):
     Inner = 'INNER'
 
 @dataclass(frozen=True)
-class JoinQuery(Generic[TC, TC1]):
+class JoinQuery(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1]]]):
     join_type: JoinType
     table1: Type[TC]
     table2: Type[TC1]
@@ -334,14 +344,30 @@ class JoinQuery(Generic[TC, TC1]):
     _on_left: PropSelect[TC, Any] | None = None
     _on_right: PropSelect[TC1, Any] | None = None
 
-    def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'JoinQuery[TC, TC1]':
+    def columns(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'JoinQuery[TC, TC1]':
         return JoinQuery(self.join_type, self.table1, self.table2, [sel, *sels], self._where_left, self._where_right, self._on_left, self._on_right)
-    
+
     def on(self, left: PropSelect[TC, A], right: PropSelect[TC1, A]) -> 'JoinQuery[TC, TC1]':
         return JoinQuery(self.join_type, self.table1, self.table2, self._selection, self._where_left, self._where_right, left, right)
-    
+
     def where_left(self, constraint: Constraint[TC]) -> 'JoinQuery[TC, TC1]':
         return JoinQuery(self.join_type, self.table1, self.table2, self._selection, constraint, self._where_right, self._on_left, self._on_right)
-    
+
     def where_right(self, constraint: Constraint[TC1]) -> 'JoinQuery[TC, TC1]':
         return JoinQuery(self.join_type, self.table1, self.table2, self._selection, self._where_left, constraint, self._on_left, self._on_right)
+
+    def to_sql(self) -> str:
+        assert self._selection is not None and len(self._selection) > 0, 'You must select a value'
+        assert self._on_left is not None and self._on_right is not None, 'You must specify a join condition with on()'
+
+        selections = ', '.join(_qualified_label(p, True) for p in self._selection)
+        table1_name = self.table1.__name__.lower()
+        table2_name = self.table2.__name__.lower()
+        on_clause = f'{_qualified_label(self._on_left, True)} = {_qualified_label(self._on_right, True)}'
+        where_parts = [c.to_sql(qualify=True) for c in (self._where_left, self._where_right) if c is not None]
+        where_clause = '' if not where_parts else ' WHERE ' + ' AND '.join(where_parts)
+
+        return (
+            f'SELECT {selections} FROM {table1_name} {self.join_type.value} JOIN {table2_name} '
+            f'ON {on_clause}{where_clause};'
+        )
