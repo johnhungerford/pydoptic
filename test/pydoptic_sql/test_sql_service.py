@@ -17,7 +17,7 @@ def test_create_query_table():
             try:
                 tx.execute(SqlQuery.create(MyTable))
 
-                res = tx.execute(SqlQuery.select(MyTable.prop_1, MyTable.prop_2))
+                res = tx.execute(SqlQuery.from_(MyTable).select(MyTable.prop_1, MyTable.prop_2).where())
                 value = res.fetchone()
                 assert value is None
             finally:
@@ -40,6 +40,7 @@ def test_create_create_insert_query():
 
                 res = tx.execute(
                     SqlQuery
+                    .from_(MyTable)
                     .select(MyTable.prop_1, MyTable.prop_2, MyTable.prop_3)
                     .where(Constraint.eq(MyTable.prop_2, 'some text'))
                 )

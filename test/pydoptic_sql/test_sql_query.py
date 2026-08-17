@@ -2,9 +2,9 @@ from datetime import date, datetime
 
 import pytest
 
-from pydoptic_sql import SqlTable, ColumnType, PrimaryKey, AutoIncrement, column, SqlQuery, Constraint, Constraint2
-from pydoptic_sql.sql_constraint import BetweenConstraint, InConstraint, BetweenConstraint2, InConstraint2
-from pydoptic_sql.sql_query import Query, UpdateQuery, Query2, JoinType
+from pydoptic_sql import SqlTable, ColumnType, PrimaryKey, AutoIncrement, column, SqlQuery, Constraint, Constraint2, Constraint3, Constraint4
+from pydoptic_sql.sql_constraint import BetweenConstraint, InConstraint, BetweenConstraint2, InConstraint2, BetweenConstraint3, InConstraint3
+from pydoptic_sql.sql_query import Query1, UpdateQuery, JoinType, JoinQuery2, JoinQuery3, Query2, Query3, Query4
 from pydoptic import Prop, PropOpt
 
 
@@ -67,6 +67,18 @@ class Worker(SqlTable):
     name: Prop['Worker', str] = column(type=ColumnType.TEXT())
     department_id: Prop['Worker', int]
     age: Prop['Worker', int]
+
+
+class Project(SqlTable):
+    id: Prop['Project', int] = column(type=ColumnType.BIGINT(), constraints=[PrimaryKey])
+    name: Prop['Project', str] = column(type=ColumnType.TEXT())
+    department_id: Prop['Project', int]
+
+
+class Task(SqlTable):
+    id: Prop['Task', int] = column(type=ColumnType.BIGINT(), constraints=[PrimaryKey])
+    name: Prop['Task', str] = column(type=ColumnType.TEXT())
+    project_id: Prop['Task', int]
 
 
 # --- CREATE TABLE ---
@@ -279,32 +291,58 @@ def test_delete_query_uses_model_name_not_column_names():
 # --- SELECT (basic shape) ---
 
 def test_select_query_single_column():
-    query = SqlQuery.select(Table.prop_1)
+    query = SqlQuery.from_(Table).select(Table.prop_1).where()
 
     assert query.to_sql() == 'SELECT prop_1 FROM table;'
 
 
 def test_select_query_multiple_columns():
-    query = SqlQuery.select(Employee.id, Employee.name, Employee.age)
+    query = SqlQuery.from_(Employee).select(Employee.id, Employee.name, Employee.age).where()
 
     assert query.to_sql() == 'SELECT id, name, age FROM employee;'
 
 
 def test_select_query_without_where_omits_where_clause():
-    query = SqlQuery.select(Table.prop_1, Table.prop_2)
+    query = SqlQuery.from_(Table).select(Table.prop_1, Table.prop_2).where()
 
     assert query.to_sql() == 'SELECT prop_1, prop_2 FROM table;'
 
 
+def test_select_query_defaults_to_selecting_every_column():
+    query = SqlQuery.from_(Table).where()
+
+    assert query.to_sql() == 'SELECT prop_1, prop_2, prop_3, prop_4 FROM table;'
+
+
+def test_select_query_select_more_appends_to_existing_selection():
+    query = SqlQuery.from_(Table).select(Table.prop_1).select_more(Table.prop_2).where()
+
+    assert query.to_sql() == 'SELECT prop_1, prop_2 FROM table;'
+
+
+def test_select_query_select_replaces_previous_selection():
+    query = SqlQuery.from_(Table).select(Table.prop_1).select(Table.prop_2).where()
+
+    assert query.to_sql() == 'SELECT prop_2 FROM table;'
+
+
+def test_select_query_can_change_selection_after_finalizing():
+    finalized = SqlQuery.from_(Table).select(Table.prop_1).where()
+    reselected = finalized.select(Table.prop_2).select_more(Table.prop_3)
+
+    assert finalized.to_sql() == 'SELECT prop_1 FROM table;'
+    assert reselected.to_sql() == 'SELECT prop_2, prop_3 FROM table;'
+
+
 def test_select_query_requires_at_least_one_selected_property():
-    query = Query(Table, [], None)
+    query = Query1(Table, [], None)
 
     with pytest.raises(AssertionError):
         query.to_sql()
 
 
 def test_simply_select_query():
-    query: Query[Table] = SqlQuery.select(
+    query: Query1[Table] = SqlQuery.from_(Table).select(
         Table.prop_1,
         Table.prop_2,
     ).where(
@@ -476,7 +514,7 @@ def test_constraint_in_factory_with_string_values():
 # --- SELECT combined with rich WHERE clauses ---
 
 def test_select_query_with_between_constraint():
-    query = SqlQuery.select(Employee.name, Employee.age).where(
+    query = SqlQuery.from_(Employee).select(Employee.name, Employee.age).where(
         BetweenConstraint(Employee.age, 20, 30),
     )
 
@@ -484,7 +522,7 @@ def test_select_query_with_between_constraint():
 
 
 def test_select_query_with_in_constraint():
-    query = SqlQuery.select(Employee.name).where(
+    query = SqlQuery.from_(Employee).select(Employee.name).where(
         InConstraint(Employee.age, [20, 30, 40]),
     )
 
@@ -492,7 +530,7 @@ def test_select_query_with_in_constraint():
 
 
 def test_select_query_with_nested_and_or_not_constraints():
-    query = SqlQuery.select(Employee.id, Employee.name).where(
+    query = SqlQuery.from_(Employee).select(Employee.id, Employee.name).where(
         Constraint.all(
             Constraint.any(
                 Constraint.eq(Employee.name, 'Alice'),
@@ -508,12 +546,11 @@ def test_select_query_with_nested_and_or_not_constraints():
 
 
 def test_select_query_where_replaces_previous_where():
-    base = SqlQuery.select(Employee.id).where(Constraint.eq(Employee.age, 1))
+    base = SqlQuery.from_(Employee).select(Employee.id).where(Constraint.eq(Employee.age, 1))
     updated = base.where(Constraint.eq(Employee.age, 2))
 
     assert base.to_sql() == 'SELECT id FROM employee WHERE age = 1;'
     assert updated.to_sql() == 'SELECT id FROM employee WHERE age = 2;'
-
 
 
 # --- Constraint2 (constraints spanning two joined tables) ---
@@ -577,31 +614,82 @@ def test_constraint2_between_and_in_factories():
     assert Constraint2[Worker, Department].in_(Worker.age, [20, 30]).to_sql() == 'worker.age IN (20, 30)'
 
 
-# --- JOIN (Query2) ---
+# --- Constraint3 (constraints spanning three joined tables) ---
 
-def test_join_query_inner():
-    query = SqlQuery.join_inner(Worker, Department).columns(Worker.name, Department.name).on(
-        Worker.department_id, Department.id,
+def test_constraint3_always_qualifies_columns():
+    assert Constraint3[Worker, Department, Project].eq(Project.department_id, Department.id).to_sql() == 'project.department_id = department.id'
+
+
+def test_constraint3_can_reference_all_three_tables_at_once():
+    constraint: Constraint3[Worker, Department, Project] = Constraint3.all(
+        Constraint3.eq(Worker.department_id, Department.id),
+        Constraint3.eq(Project.department_id, Department.id),
+        Constraint3.gt(Worker.age, 21),
     )
+
+    assert constraint.to_sql() == '(worker.department_id = department.id AND project.department_id = department.id AND worker.age > 21)'
+
+
+def test_between_constraint3():
+    constraint: BetweenConstraint3[Worker, Department, Project, int] = BetweenConstraint3(Worker.age, Department.min_age, 65)
+
+    assert constraint.to_sql() == 'worker.age BETWEEN department.min_age AND 65'
+
+
+def test_in_constraint3():
+    constraint: InConstraint3[Worker, Department, Project, int] = InConstraint3(Worker.age, [20, 30, 40])
+
+    assert constraint.to_sql() == 'worker.age IN (20, 30, 40)'
+
+
+# --- Constraint4 (constraints spanning four joined tables) ---
+
+def test_constraint4_can_reference_all_four_tables():
+    constraint: Constraint4[Worker, Department, Project, Task] = Constraint4.all(
+        Constraint4.eq(Worker.department_id, Department.id),
+        Constraint4.eq(Project.department_id, Department.id),
+        Constraint4.eq(Task.project_id, Project.id),
+    )
+
+    assert constraint.to_sql() == (
+        '(worker.department_id = department.id AND project.department_id = department.id AND task.project_id = project.id)'
+    )
+
+
+# --- JOIN: 2 tables (JoinQuery2 -> Query2) ---
+
+def test_join_query2_inner():
+    query = SqlQuery.from_(Worker).join_inner(Department, Constraint2.eq(Worker.department_id, Department.id)).select(
+        Worker.name, Department.name,
+    ).where()
 
     assert query.to_sql() == (
         'SELECT worker.name, department.name FROM worker INNER JOIN department ON worker.department_id = department.id;'
     )
 
 
-def test_join_query_left():
-    query = SqlQuery.join_left(Worker, Department).columns(Worker.id, Worker.name).on(
-        Worker.department_id, Department.id,
-    )
+def test_join_query2_left():
+    query = SqlQuery.from_(Worker).join_left(Department, Constraint2.eq(Worker.department_id, Department.id)).select(
+        Worker.id, Worker.name,
+    ).where()
 
     assert query.to_sql() == (
         'SELECT worker.id, worker.name FROM worker LEFT JOIN department ON worker.department_id = department.id;'
     )
 
 
-def test_join_query_with_where():
-    query = SqlQuery.join_inner(Worker, Department).columns(Worker.name, Department.name).on(
-        Worker.department_id, Department.id,
+def test_join_query2_defaults_to_selecting_every_column_of_every_table():
+    query = SqlQuery.from_(Worker).join_inner(Department, Constraint2.eq(Worker.department_id, Department.id)).where()
+
+    assert query.to_sql() == (
+        'SELECT worker.id, worker.name, worker.department_id, worker.age, department.id, department.name, department.min_age '
+        'FROM worker INNER JOIN department ON worker.department_id = department.id;'
+    )
+
+
+def test_join_query2_with_where():
+    query = SqlQuery.from_(Worker).join_inner(Department, Constraint2.eq(Worker.department_id, Department.id)).select(
+        Worker.name, Department.name,
     ).where(
         Constraint2.gt(Worker.age, 30),
     )
@@ -612,26 +700,11 @@ def test_join_query_with_where():
     )
 
 
-def test_join_query_where_can_combine_constraints_from_both_tables():
-    query = SqlQuery.join_inner(Worker, Department).columns(Worker.name, Department.name).on(
-        Worker.department_id, Department.id,
-    ).where(
-        Constraint2.all(
-            Constraint2.gt(Worker.age, 30),
-            Constraint2.eq(Department.name, 'Engineering'),
-        ),
-    )
-
-    assert query.to_sql() == (
-        "SELECT worker.name, department.name FROM worker INNER JOIN department "
-        "ON worker.department_id = department.id WHERE (worker.age > 30 AND department.name = 'Engineering');"
-    )
-
-
-def test_join_query_where_can_compare_columns_across_tables_directly():
-    # This is exactly what where_left/where_right couldn't express: a predicate that references both tables at once.
-    query = SqlQuery.join_inner(Worker, Department).columns(Worker.name).on(
-        Worker.department_id, Department.id,
+def test_join_query2_where_can_compare_columns_across_tables_directly():
+    # This is exactly what where_left/where_right used to be unable to express: a single predicate
+    # referencing both tables at once.
+    query = SqlQuery.from_(Worker).join_inner(Department, Constraint2.eq(Worker.department_id, Department.id)).select(
+        Worker.name,
     ).where(
         Constraint2.gte(Worker.age, Department.min_age),
     )
@@ -642,31 +715,222 @@ def test_join_query_where_can_compare_columns_across_tables_directly():
     )
 
 
-def test_join_query_requires_columns():
-    query = Query2(JoinType.Inner, Worker, Department).on(Worker.department_id, Department.id)
+def test_join_query2_multiple_on_conditions_are_anded():
+    query = SqlQuery.from_(Worker).join_inner(
+        Department,
+        Constraint2.eq(Worker.department_id, Department.id),
+        Constraint2.gte(Worker.age, Department.min_age),
+    ).select(Worker.name).where()
+
+    assert query.to_sql() == (
+        'SELECT worker.name FROM worker INNER JOIN department '
+        'ON worker.department_id = department.id AND worker.age >= department.min_age;'
+    )
+
+
+def test_join_query2_requires_at_least_one_column():
+    query = Query2(Worker, Department, JoinType.Inner, [Constraint2.eq(Worker.department_id, Department.id)], [])
 
     with pytest.raises(AssertionError):
         query.to_sql()
 
 
-def test_join_query_requires_on():
-    query = SqlQuery.join_inner(Worker, Department).columns(Worker.name)
+def test_join_query2_requires_at_least_one_on_condition():
+    query = SqlQuery.from_(Worker).join_inner(Department).select(Worker.name)
 
     with pytest.raises(AssertionError):
-        query.to_sql()
+        query.where().to_sql()
 
 
-def test_join_query_where_replaces_previous_where():
-    base = SqlQuery.join_inner(Worker, Department).columns(Worker.name).on(
-        Worker.department_id, Department.id,
+def test_join_query2_where_replaces_previous_where():
+    base = SqlQuery.from_(Worker).join_inner(Department, Constraint2.eq(Worker.department_id, Department.id)).select(
+        Worker.name,
     ).where(Constraint2.eq(Worker.age, 1))
     updated = base.where(Constraint2.eq(Worker.age, 2))
 
     assert base.to_sql() == (
-        'SELECT worker.name FROM worker INNER JOIN department ON worker.department_id = department.id '
-        'WHERE worker.age = 1;'
+        'SELECT worker.name FROM worker INNER JOIN department ON worker.department_id = department.id WHERE worker.age = 1;'
     )
     assert updated.to_sql() == (
-        'SELECT worker.name FROM worker INNER JOIN department ON worker.department_id = department.id '
-        'WHERE worker.age = 2;'
+        'SELECT worker.name FROM worker INNER JOIN department ON worker.department_id = department.id WHERE worker.age = 2;'
     )
+
+
+def test_join_query2_can_change_selection_after_finalizing():
+    finalized = SqlQuery.from_(Worker).join_inner(Department, Constraint2.eq(Worker.department_id, Department.id)).select(
+        Worker.name,
+    ).where()
+    reselected = finalized.select(Department.name).select_more(Worker.age)
+
+    assert finalized.to_sql() == (
+        'SELECT worker.name FROM worker INNER JOIN department ON worker.department_id = department.id;'
+    )
+    assert reselected.to_sql() == (
+        'SELECT department.name, worker.age FROM worker INNER JOIN department ON worker.department_id = department.id;'
+    )
+
+
+# --- JOIN: 3 tables (SelectQuery -> JoinQuery2 -> JoinQuery3 -> Query3) ---
+
+def test_join_query3_chains_a_third_table():
+    query = SqlQuery.from_(Worker).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).join_inner(
+        Project, Constraint3.eq(Project.department_id, Department.id),
+    ).select(Worker.name, Department.name, Project.name).where()
+
+    assert query.to_sql() == (
+        'SELECT worker.name, department.name, project.name FROM worker '
+        'INNER JOIN department ON worker.department_id = department.id '
+        'INNER JOIN project ON project.department_id = department.id;'
+    )
+
+
+def test_join_query3_can_mix_join_types_per_step():
+    query = SqlQuery.from_(Worker).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).join_left(
+        Project, Constraint3.eq(Project.department_id, Department.id),
+    ).select(Worker.name).where()
+
+    assert query.to_sql() == (
+        'SELECT worker.name FROM worker '
+        'INNER JOIN department ON worker.department_id = department.id '
+        'LEFT JOIN project ON project.department_id = department.id;'
+    )
+
+
+def test_join_query3_on_can_reference_a_non_adjacent_table():
+    # Project is being joined in, but this ON condition references Worker (table1), not just
+    # Department (the table Project is nominally joining "against").
+    query = SqlQuery.from_(Worker).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).join_inner(
+        Project, Constraint3.eq(Project.department_id, Department.id), Constraint3.gt(Worker.age, 21),
+    ).select(Project.name).where()
+
+    assert query.to_sql() == (
+        'SELECT project.name FROM worker '
+        'INNER JOIN department ON worker.department_id = department.id '
+        'INNER JOIN project ON project.department_id = department.id AND worker.age > 21;'
+    )
+
+
+def test_join_query3_where_spans_all_three_tables():
+    query = SqlQuery.from_(Worker).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).join_inner(
+        Project, Constraint3.eq(Project.department_id, Department.id),
+    ).select(Worker.name, Project.name).where(
+        Constraint3.all(
+            Constraint3.gt(Worker.age, 21),
+            Constraint3.eq(Department.name, 'Engineering'),
+            Constraint3.like(Project.name, 'Apollo%'),
+        ),
+    )
+
+    assert query.to_sql() == (
+        'SELECT worker.name, project.name FROM worker '
+        'INNER JOIN department ON worker.department_id = department.id '
+        'INNER JOIN project ON project.department_id = department.id '
+        "WHERE (worker.age > 21 AND department.name = 'Engineering' AND project.name LIKE 'Apollo%');"
+    )
+
+
+def test_join_query3_defaults_to_selecting_every_column_of_every_table():
+    query = SqlQuery.from_(Worker).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).join_inner(
+        Project, Constraint3.eq(Project.department_id, Department.id),
+    ).where()
+
+    assert query.to_sql() == (
+        'SELECT worker.id, worker.name, worker.department_id, worker.age, '
+        'department.id, department.name, department.min_age, '
+        'project.id, project.name, project.department_id '
+        'FROM worker INNER JOIN department ON worker.department_id = department.id '
+        'INNER JOIN project ON project.department_id = department.id;'
+    )
+
+
+def test_join_query3_requires_on_condition_for_each_join_step():
+    missing_first_on = JoinQuery3(
+        Worker, Department, Project,
+        JoinType.Inner, [],
+        JoinType.Inner, [Constraint3.eq(Project.department_id, Department.id)],
+    )
+    with pytest.raises(AssertionError):
+        missing_first_on.select(Worker.name).where().to_sql()
+
+    missing_second_on = SqlQuery.from_(Worker).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).join_inner(Project).select(Worker.name)
+    with pytest.raises(AssertionError):
+        missing_second_on.where().to_sql()
+
+
+# --- JOIN: 4 tables (JoinQuery3 -> JoinQuery4 -> Query4) ---
+
+def test_join_query4_chains_a_fourth_table():
+    query = SqlQuery.from_(Worker).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).join_inner(
+        Project, Constraint3.eq(Project.department_id, Department.id),
+    ).join_left(
+        Task, Constraint4.eq(Task.project_id, Project.id),
+    ).select(Worker.name, Task.name).where()
+
+    assert query.to_sql() == (
+        'SELECT worker.name, task.name FROM worker '
+        'INNER JOIN department ON worker.department_id = department.id '
+        'INNER JOIN project ON project.department_id = department.id '
+        'LEFT JOIN task ON task.project_id = project.id;'
+    )
+
+
+def test_join_query4_where_can_reference_any_of_the_four_tables():
+    query = SqlQuery.from_(Worker).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).join_inner(
+        Project, Constraint3.eq(Project.department_id, Department.id),
+    ).join_inner(
+        Task, Constraint4.eq(Task.project_id, Project.id),
+    ).select(Task.name).where(
+        Constraint4.all(
+            Constraint4.gt(Worker.age, 21),
+            Constraint4.eq(Department.name, 'Engineering'),
+            Constraint4.like(Task.name, 'Fix%'),
+        ),
+    )
+
+    assert query.to_sql() == (
+        'SELECT task.name FROM worker '
+        'INNER JOIN department ON worker.department_id = department.id '
+        'INNER JOIN project ON project.department_id = department.id '
+        'INNER JOIN task ON task.project_id = project.id '
+        "WHERE (worker.age > 21 AND department.name = 'Engineering' AND task.name LIKE 'Fix%');"
+    )
+
+
+def test_join_query4_has_no_further_join_method():
+    builder = SqlQuery.from_(Worker).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).join_inner(
+        Project, Constraint3.eq(Project.department_id, Department.id),
+    ).join_inner(
+        Task, Constraint4.eq(Task.project_id, Project.id),
+    )
+
+    assert not hasattr(builder, 'inner_join')
+    assert not hasattr(builder, 'left_join')
+
+
+def test_join_query4_requires_on_condition_for_the_final_join_step():
+    query = SqlQuery.from_(Worker).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).join_inner(
+        Project, Constraint3.eq(Project.department_id, Department.id),
+    ).join_inner(Task).select(Worker.name)
+
+    with pytest.raises(AssertionError):
+        query.where().to_sql()
