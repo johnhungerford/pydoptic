@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 import pytest
 
-from pydoptic_sql import SqlTable, ColumnType, PrimaryKey, AutoIncrement, column, SqlQuery, Constraint, Constraint2, Constraint3, Constraint4
+from pydoptic_sql import SqlTable, ColumnType, PrimaryKey, AutoIncrement, column, SqlQuery, Constraint, Constraint2, Constraint3, Constraint4, Direction, OrderBy
 from pydoptic_sql.sql_constraint import BetweenConstraint, InConstraint
 from pydoptic_sql.sql_query import Query1, UpdateQuery, JoinType, JoinQuery2, JoinQuery3, Query2, Query3, Query4
 from pydoptic import Prop, PropOpt
@@ -397,6 +397,64 @@ def test_select_query_where_replaces_previous_where():
     assert updated.to_sql() == 'SELECT id FROM employee WHERE age = 2;'
 
 
+# --- ORDER BY (single table) ---
+
+def test_select_query_without_order_by_omits_order_by_clause():
+    query = SqlQuery.from_table(Employee).select(Employee.id).where()
+
+    assert query.to_sql() == 'SELECT id FROM employee;'
+
+def test_order_by_more_defaults_to_ascending():
+    query = SqlQuery.from_table(Employee).select(Employee.id).where().order_by_more(Employee.age)
+
+    assert query.to_sql() == 'SELECT id FROM employee ORDER BY age ASC;'
+
+def test_order_by_more_with_explicit_direction():
+    query = SqlQuery.from_table(Employee).select(Employee.id).where().order_by_more(Employee.age, Direction.DESC)
+
+    assert query.to_sql() == 'SELECT id FROM employee ORDER BY age DESC;'
+
+def test_order_by_more_appends_multiple_columns_in_call_order():
+    query = SqlQuery.from_table(Employee).select(Employee.id).where().order_by_more(
+        Employee.age, Direction.DESC,
+    ).order_by_more(Employee.name)
+
+    assert query.to_sql() == 'SELECT id FROM employee ORDER BY age DESC, name ASC;'
+
+def test_order_by_replaces_the_entire_sequence():
+    query = SqlQuery.from_table(Employee).select(Employee.id).where().order_by_more(Employee.age)
+    replaced = query.order_by(OrderBy(Employee.name, Direction.DESC))
+
+    assert query.to_sql() == 'SELECT id FROM employee ORDER BY age ASC;'
+    assert replaced.to_sql() == 'SELECT id FROM employee ORDER BY name DESC;'
+
+def test_order_by_with_no_args_clears_the_sequence():
+    query = SqlQuery.from_table(Employee).select(Employee.id).where().order_by_more(Employee.age)
+    cleared = query.order_by()
+
+    assert cleared.to_sql() == 'SELECT id FROM employee;'
+
+def test_order_by_set_on_builder_before_where_carries_through():
+    query = SqlQuery.from_table(Employee).select(Employee.id).order_by_more(Employee.age).where()
+
+    assert query.to_sql() == 'SELECT id FROM employee ORDER BY age ASC;'
+
+def test_order_by_renders_after_where_clause():
+    query = SqlQuery.from_table(Employee).select(Employee.id).where(
+        Constraint.eq(Employee.active, True),
+    ).order_by_more(Employee.age)
+
+    assert query.to_sql() == 'SELECT id FROM employee WHERE active = True ORDER BY age ASC;'
+
+def test_order_by_contributes_no_query_params():
+    sql, params = SqlQuery.from_table(Employee).select(Employee.id).where(
+        Constraint.eq(Employee.active, True),
+    ).order_by_more(Employee.age).to_sql_params()
+
+    assert sql == 'SELECT id FROM employee WHERE active = %s ORDER BY age ASC;'
+    assert params == [True]
+
+
 # --- JOIN: 2 tables (JoinQuery2 -> Query2) ---
 
 def test_join_query2_inner():
@@ -680,3 +738,79 @@ def test_join_query4_requires_on_condition_for_the_final_join_step():
 
     with pytest.raises(AssertionError):
         query.where().to_sql()
+
+
+# --- ORDER BY (joined tables) ---
+# OrderBy has no arity variants of its own -- a joined query's order-by sequence is typed as a union
+# of OrderBy[<each joined table>], so an entry stays valid unchanged as more tables get joined in.
+
+def test_join_query2_order_by_can_reference_either_table():
+    query = SqlQuery.from_table(Worker).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).select(Worker.name, Department.name).where().order_by_more(Department.name).order_by_more(Worker.name, Direction.DESC)
+
+    assert query.to_sql() == (
+        'SELECT worker.name, department.name FROM worker '
+        'INNER JOIN department ON worker.department_id = department.id '
+        'ORDER BY department.name ASC, worker.name DESC;'
+    )
+
+def test_order_by_set_before_join_carries_through_unchanged():
+    # The whole point of not needing OrderBy2/OrderBy3/... : an OrderBy[Worker] set while there's
+    # only one table in scope is still exactly what gets rendered once a second table is joined in.
+    query = SqlQuery.from_table(Worker).order_by_more(Worker.name).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).select(Worker.name).where()
+
+    assert query.to_sql() == (
+        'SELECT worker.name FROM worker INNER JOIN department ON worker.department_id = department.id '
+        'ORDER BY worker.name ASC;'
+    )
+
+def test_join_query2_order_by_replaces_and_clears():
+    base = SqlQuery.from_table(Worker).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).select(Worker.name).where().order_by_more(Worker.name)
+    replaced = base.order_by(OrderBy(Department.name, Direction.DESC))
+    cleared = replaced.order_by()
+
+    assert base.to_sql() == (
+        'SELECT worker.name FROM worker INNER JOIN department ON worker.department_id = department.id ORDER BY worker.name ASC;'
+    )
+    assert replaced.to_sql() == (
+        'SELECT worker.name FROM worker INNER JOIN department ON worker.department_id = department.id ORDER BY department.name DESC;'
+    )
+    assert cleared.to_sql() == (
+        'SELECT worker.name FROM worker INNER JOIN department ON worker.department_id = department.id;'
+    )
+
+def test_join_query3_order_by_can_reference_any_of_the_three_tables():
+    query = SqlQuery.from_table(Worker).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).join_inner(
+        Project, Constraint3.eq(Project.department_id, Department.id),
+    ).select(Worker.name, Project.name).where().order_by_more(Project.name).order_by_more(Worker.age, Direction.DESC)
+
+    assert query.to_sql() == (
+        'SELECT worker.name, project.name FROM worker '
+        'INNER JOIN department ON worker.department_id = department.id '
+        'INNER JOIN project ON project.department_id = department.id '
+        'ORDER BY project.name ASC, worker.age DESC;'
+    )
+
+def test_join_query4_order_by_can_reference_the_fourth_table():
+    query = SqlQuery.from_table(Worker).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).join_inner(
+        Project, Constraint3.eq(Project.department_id, Department.id),
+    ).join_inner(
+        Task, Constraint4.eq(Task.project_id, Project.id),
+    ).select(Task.name).where().order_by_more(Task.project_id).order_by_more(Task.name)
+
+    assert query.to_sql() == (
+        'SELECT task.name FROM worker '
+        'INNER JOIN department ON worker.department_id = department.id '
+        'INNER JOIN project ON project.department_id = department.id '
+        'INNER JOIN task ON task.project_id = project.id '
+        'ORDER BY task.project_id ASC, task.name ASC;'
+    )

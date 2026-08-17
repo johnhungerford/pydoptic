@@ -6,6 +6,7 @@ from pydoptic import PartialModel
 from pydoptic.selector import PropSelect, Prop, PropOpt, Param
 from pydoptic_sql import SqlTable
 from pydoptic_sql.sql_constraint import A, TC, TC1, TC2, TC3, Constraint, Constraint2, Constraint3, Constraint4, _qualified_label
+from pydoptic_sql.sql_order import Direction, OrderBy
 from pydoptic_sql.sql_table import (
     AutoIncrement,
     Check,
@@ -69,6 +70,15 @@ def _resolve_selection(selection: Sequence[PropSelect[Any, Any]] | None, *tables
         result.extend(_all_props(table))
     return result
 
+def _order_by_sql(order_by: Sequence[OrderBy[Any]], qualify: bool) -> str:
+    """Render an ' ORDER BY ...' clause (leading space included), or '' if there's nothing to order by.
+    Qualification (table.column vs. bare column) is decided here by the caller, not by OrderBy itself --
+    OrderBy has no arity variants, so it doesn't know which query arity it's being rendered for."""
+    if not order_by:
+        return ''
+    label = _qualified_label if qualify else (lambda p: p.label)
+    return ' ORDER BY ' + ', '.join(f'{label(ob.column)} {ob.direction.value}' for ob in order_by)
+
 
 class JoinType(Enum):
     Left = 'LEFT'
@@ -81,50 +91,66 @@ class JoinType(Enum):
 class SelectQuery(Generic[TC]):
     table1: Type[TC]
     _selection: Sequence[PropSelect[TC, Any]] | None = None
+    _order_by: Sequence[OrderBy[TC]] = ()
 
     def select(self, sel: PropSelect[TC, Any], *sels: PropSelect[TC, Any]) -> 'SelectQuery[TC]':
-        return SelectQuery(self.table1, [sel, *sels])
+        return SelectQuery(self.table1, [sel, *sels], self._order_by)
 
     def select_more(self, sel: PropSelect[TC, Any], *sels: PropSelect[TC, Any]) -> 'SelectQuery[TC]':
-        return SelectQuery(self.table1, [*(self._selection or []), sel, *sels])
+        return SelectQuery(self.table1, [*(self._selection or []), sel, *sels], self._order_by)
+
+    def order_by(self, *order_by: OrderBy[TC]) -> 'SelectQuery[TC]':
+        return SelectQuery(self.table1, self._selection, list(order_by))
+
+    def order_by_more(self, column: Prop[TC, Any] | PropOpt[TC, Any], direction: Direction = Direction.ASC) -> 'SelectQuery[TC]':
+        return SelectQuery(self.table1, self._selection, [*self._order_by, OrderBy(column, direction)])
 
     def join_inner(self, next: Type[TC1], on: Constraint2[TC, TC1] | None = None) -> 'JoinQuery2[TC, TC1]':
-        return JoinQuery2(self.table1, next, JoinType.Inner, on, self._selection)
+        return JoinQuery2(self.table1, next, JoinType.Inner, on, self._selection, self._order_by)
 
     def join_left(self, next: Type[TC1], on: Constraint2[TC, TC1] | None = None) -> 'JoinQuery2[TC, TC1]':
-        return JoinQuery2(self.table1, next, JoinType.Left, on, self._selection)
+        return JoinQuery2(self.table1, next, JoinType.Left, on, self._selection, self._order_by)
 
     def where(self, constraint: Constraint[TC] | None = None) -> 'Query1[TC]':
-        return Query1(self.table1, _resolve_selection(self._selection, self.table1), constraint)
+        return Query1(self.table1, _resolve_selection(self._selection, self.table1), constraint, self._order_by)
 
 @dataclass(frozen=True)
 class Query1(Generic[TC], SqlQuery[PartialModel[TC]]):
     table1: Type[TC]
     _selection: Sequence[PropSelect[TC, Any]]
     _where: Constraint[TC] | None = None
+    _order_by: Sequence[OrderBy[TC]] = ()
 
     def select(self, sel: PropSelect[TC, Any], *sels: PropSelect[TC, Any]) -> 'Query1[TC]':
-        return Query1(self.table1, [sel, *sels], self._where)
+        return Query1(self.table1, [sel, *sels], self._where, self._order_by)
 
     def select_more(self, sel: PropSelect[TC, Any], *sels: PropSelect[TC, Any]) -> 'Query1[TC]':
-        return Query1(self.table1, [*self._selection, sel, *sels], self._where)
+        return Query1(self.table1, [*self._selection, sel, *sels], self._where, self._order_by)
 
     def where(self, constraint: Constraint[TC] | None = None) -> 'Query1[TC]':
-        return Query1(self.table1, self._selection, constraint)
+        return Query1(self.table1, self._selection, constraint, self._order_by)
+
+    def order_by(self, *order_by: OrderBy[TC]) -> 'Query1[TC]':
+        return Query1(self.table1, self._selection, self._where, list(order_by))
+
+    def order_by_more(self, column: Prop[TC, Any] | PropOpt[TC, Any], direction: Direction = Direction.ASC) -> 'Query1[TC]':
+        return Query1(self.table1, self._selection, self._where, [*self._order_by, OrderBy(column, direction)])
 
     def to_sql(self) -> str:
         assert len(self._selection) > 0, 'You must select at least one column'
         selections = ', '.join(p.label for p in self._selection)
         where_clause = '' if self._where is None else (' WHERE ' + self._where.to_sql())
-        return f'SELECT {selections} FROM {self.table1.__name__.lower()}{where_clause};'
+        order_by_clause = _order_by_sql(self._order_by, qualify=False)
+        return f'SELECT {selections} FROM {self.table1.__name__.lower()}{where_clause}{order_by_clause};'
 
     def to_sql_params(self) -> Tuple[str, List[Any]]:
         assert len(self._selection) > 0, 'You must select at least one column'
         selections = ', '.join(p.label for p in self._selection)
+        order_by_clause = _order_by_sql(self._order_by, qualify=False)
         if self._where is None:
-            return f'SELECT {selections} FROM {self.table1.__name__.lower()};', []
+            return f'SELECT {selections} FROM {self.table1.__name__.lower()}{order_by_clause};', []
         where_clause, params = self._where.to_sql_params()
-        return f'SELECT {selections} FROM {self.table1.__name__.lower()} WHERE {where_clause};', params
+        return f'SELECT {selections} FROM {self.table1.__name__.lower()} WHERE {where_clause}{order_by_clause};', params
 
 
 # --- CREATE / DROP / INSERT / UPDATE / DELETE (always single-table) ---
@@ -259,6 +285,10 @@ class DeleteQuery(Generic[TC], SqlQuery[None]):
 # Each join step keeps its own JoinType and on-constraints (of the arity active when that table was
 # added), since a chained join can mix LEFT/INNER per step and later ON clauses may reference any
 # previously joined table. Joining stops at 4 tables; beyond that, compose queries by hand.
+#
+# _order_by widens by one OrderBy[...] union member per table added (rather than gaining an arity
+# variant the way Constraint does), since an OrderBy entry only ever wraps one column -- an entry set
+# before a join stays exactly as valid after it, with no re-wrapping needed.
 
 @dataclass(frozen=True)
 class JoinQuery2(Generic[TC, TC1]):
@@ -267,21 +297,29 @@ class JoinQuery2(Generic[TC, TC1]):
     join_type_2: JoinType
     on_2: Constraint2[TC, TC1] | None
     _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any]] | None = None
+    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1]] = ()
 
     def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'JoinQuery2[TC, TC1]':
-        return JoinQuery2(self.table1, self.table2, self.join_type_2, self.on_2, [sel, *sels])
+        return JoinQuery2(self.table1, self.table2, self.join_type_2, self.on_2, [sel, *sels], self._order_by)
 
     def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'JoinQuery2[TC, TC1]':
-        return JoinQuery2(self.table1, self.table2, self.join_type_2, self.on_2, [*(self._selection or []), sel, *sels])
+        return JoinQuery2(self.table1, self.table2, self.join_type_2, self.on_2, [*(self._selection or []), sel, *sels], self._order_by)
+
+    def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1]) -> 'JoinQuery2[TC, TC1]':
+        return JoinQuery2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, list(order_by))
+
+    def order_by_more(self, column: Prop[TC, Any] | PropOpt[TC, Any] | Prop[TC1, Any] | PropOpt[TC1, Any], direction: Direction = Direction.ASC) -> 'JoinQuery2[TC, TC1]':
+        new_entry: OrderBy[TC] | OrderBy[TC1] = OrderBy(column, direction) # type: ignore[assignment]
+        return JoinQuery2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, [*self._order_by, new_entry])
 
     def join_inner(self, next: Type[TC2], on: Constraint3[TC, TC1, TC2] | None = None) -> 'JoinQuery3[TC, TC1, TC2]':
-        return JoinQuery3(self.table1, self.table2, next, self.join_type_2, self.on_2, JoinType.Inner, on, self._selection)
+        return JoinQuery3(self.table1, self.table2, next, self.join_type_2, self.on_2, JoinType.Inner, on, self._selection, self._order_by)
 
     def join_left(self, next: Type[TC2], on: Constraint3[TC, TC1, TC2] | None = None) -> 'JoinQuery3[TC, TC1, TC2]':
-        return JoinQuery3(self.table1, self.table2, next, self.join_type_2, self.on_2, JoinType.Left, on, self._selection)
+        return JoinQuery3(self.table1, self.table2, next, self.join_type_2, self.on_2, JoinType.Left, on, self._selection, self._order_by)
 
     def where(self, constraint: Constraint2[TC, TC1] | None = None) -> 'Query2[TC, TC1]':
-        return Query2(self.table1, self.table2, self.join_type_2, self.on_2, _resolve_selection(self._selection, self.table1, self.table2), constraint)
+        return Query2(self.table1, self.table2, self.join_type_2, self.on_2, _resolve_selection(self._selection, self.table1, self.table2), constraint, self._order_by)
 
 @dataclass(frozen=True)
 class Query2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1]]]):
@@ -291,15 +329,23 @@ class Query2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1
     on_2: Constraint2[TC, TC1] | None
     _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any]]
     _where: Constraint2[TC, TC1] | None = None
+    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1]] = ()
 
     def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'Query2[TC, TC1]':
-        return Query2(self.table1, self.table2, self.join_type_2, self.on_2, [sel, *sels], self._where)
+        return Query2(self.table1, self.table2, self.join_type_2, self.on_2, [sel, *sels], self._where, self._order_by)
 
     def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'Query2[TC, TC1]':
-        return Query2(self.table1, self.table2, self.join_type_2, self.on_2, [*self._selection, sel, *sels], self._where)
+        return Query2(self.table1, self.table2, self.join_type_2, self.on_2, [*self._selection, sel, *sels], self._where, self._order_by)
 
     def where(self, constraint: Constraint2[TC, TC1] | None = None) -> 'Query2[TC, TC1]':
-        return Query2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, constraint)
+        return Query2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, constraint, self._order_by)
+
+    def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1]) -> 'Query2[TC, TC1]':
+        return Query2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._where, list(order_by))
+
+    def order_by_more(self, column: Prop[TC, Any] | PropOpt[TC, Any] | Prop[TC1, Any] | PropOpt[TC1, Any], direction: Direction = Direction.ASC) -> 'Query2[TC, TC1]':
+        new_entry: OrderBy[TC] | OrderBy[TC1] = OrderBy(column, direction) # type: ignore[assignment]
+        return Query2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._where, [*self._order_by, new_entry])
 
     def to_sql(self) -> str:
         assert len(self._selection) > 0, 'You must select at least one column'
@@ -307,18 +353,20 @@ class Query2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1
 
         selections = ', '.join(_qualified_label(p) for p in self._selection)
         where_clause = '' if self._where is None else ' WHERE ' + self._where.to_sql()
+        order_by_clause = _order_by_sql(self._order_by, qualify=True)
 
         from_clause = f'{self.table1.__name__.lower()}'
         on_2_clause = self.on_2.to_sql()
         from_clause += f' {self.join_type_2.value} JOIN {self.table2.__name__.lower()} ON {on_2_clause}'
 
-        return f'SELECT {selections} FROM {from_clause}{where_clause};'
+        return f'SELECT {selections} FROM {from_clause}{where_clause}{order_by_clause};'
 
     def to_sql_params(self) -> Tuple[str, List[Any]]:
         assert len(self._selection) > 0, 'You must select at least one column'
         assert self.on_2 is not None, 'You must specify a join condition for join 2'
 
         selections = ', '.join(_qualified_label(p) for p in self._selection)
+        order_by_clause = _order_by_sql(self._order_by, qualify=True)
         params: List[Any] = []
 
         on_2_clause, on_2_params = self.on_2.to_sql_params()
@@ -326,10 +374,10 @@ class Query2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1
         from_clause = f'{self.table1.__name__.lower()} {self.join_type_2.value} JOIN {self.table2.__name__.lower()} ON {on_2_clause}'
 
         if self._where is None:
-            return f'SELECT {selections} FROM {from_clause};', params
+            return f'SELECT {selections} FROM {from_clause}{order_by_clause};', params
         where_clause, where_params = self._where.to_sql_params()
         params += where_params
-        return f'SELECT {selections} FROM {from_clause} WHERE {where_clause};', params
+        return f'SELECT {selections} FROM {from_clause} WHERE {where_clause}{order_by_clause};', params
 
 @dataclass(frozen=True)
 class JoinQuery3(Generic[TC, TC1, TC2]):
@@ -341,21 +389,29 @@ class JoinQuery3(Generic[TC, TC1, TC2]):
     join_type_3: JoinType
     on_3: Constraint3[TC, TC1, TC2] | None
     _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]] | None = None
+    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2]] = ()
 
     def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'JoinQuery3[TC, TC1, TC2]':
-        return JoinQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [sel, *sels])
+        return JoinQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [sel, *sels], self._order_by)
 
     def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'JoinQuery3[TC, TC1, TC2]':
-        return JoinQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [*(self._selection or []), sel, *sels])
+        return JoinQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [*(self._selection or []), sel, *sels], self._order_by)
+
+    def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2]) -> 'JoinQuery3[TC, TC1, TC2]':
+        return JoinQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, list(order_by))
+
+    def order_by_more(self, column: Prop[TC, Any] | PropOpt[TC, Any] | Prop[TC1, Any] | PropOpt[TC1, Any] | Prop[TC2, Any] | PropOpt[TC2, Any], direction: Direction = Direction.ASC) -> 'JoinQuery3[TC, TC1, TC2]':
+        new_entry: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] = OrderBy(column, direction) # type: ignore[assignment]
+        return JoinQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, [*self._order_by, new_entry])
 
     def join_inner(self, next: Type[TC3], on: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
-        return JoinQuery4(self.table1, self.table2, self.table3, next, self.join_type_2, self.on_2, self.join_type_3, self.on_3, JoinType.Inner, on, self._selection)
+        return JoinQuery4(self.table1, self.table2, self.table3, next, self.join_type_2, self.on_2, self.join_type_3, self.on_3, JoinType.Inner, on, self._selection, self._order_by)
 
     def join_left(self, next: Type[TC3], on: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
-        return JoinQuery4(self.table1, self.table2, self.table3, next, self.join_type_2, self.on_2, self.join_type_3, self.on_3, JoinType.Left, on, self._selection)
+        return JoinQuery4(self.table1, self.table2, self.table3, next, self.join_type_2, self.on_2, self.join_type_3, self.on_3, JoinType.Left, on, self._selection, self._order_by)
 
     def where(self, constraint: Constraint3[TC, TC1, TC2] | None = None) -> 'Query3[TC, TC1, TC2]':
-        return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, _resolve_selection(self._selection, self.table1, self.table2, self.table3), constraint)
+        return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, _resolve_selection(self._selection, self.table1, self.table2, self.table3), constraint, self._order_by)
 
 @dataclass(frozen=True)
 class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2]]]):
@@ -368,15 +424,23 @@ class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialMode
     on_3: Constraint3[TC, TC1, TC2] | None
     _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]]
     _where: Constraint3[TC, TC1, TC2] | None = None
+    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2]] = ()
 
     def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'Query3[TC, TC1, TC2]':
-        return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [sel, *sels], self._where)
+        return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [sel, *sels], self._where, self._order_by)
 
     def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'Query3[TC, TC1, TC2]':
-        return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [*self._selection, sel, *sels], self._where)
+        return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [*self._selection, sel, *sels], self._where, self._order_by)
 
     def where(self, constraint: Constraint3[TC, TC1, TC2] | None = None) -> 'Query3[TC, TC1, TC2]':
-        return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, constraint)
+        return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, constraint, self._order_by)
+
+    def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2]) -> 'Query3[TC, TC1, TC2]':
+        return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._where, list(order_by))
+
+    def order_by_more(self, column: Prop[TC, Any] | PropOpt[TC, Any] | Prop[TC1, Any] | PropOpt[TC1, Any] | Prop[TC2, Any] | PropOpt[TC2, Any], direction: Direction = Direction.ASC) -> 'Query3[TC, TC1, TC2]':
+        new_entry: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] = OrderBy(column, direction) # type: ignore[assignment]
+        return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._where, [*self._order_by, new_entry])
 
     def to_sql(self) -> str:
         assert len(self._selection) > 0, 'You must select at least one column'
@@ -385,6 +449,7 @@ class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialMode
 
         selections = ', '.join(_qualified_label(p) for p in self._selection)
         where_clause = '' if self._where is None else ' WHERE ' + self._where.to_sql()
+        order_by_clause = _order_by_sql(self._order_by, qualify=True)
 
         from_clause = f'{self.table1.__name__.lower()}'
         on_2_clause = self.on_2.to_sql()
@@ -392,7 +457,7 @@ class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialMode
         on_3_clause = self.on_3.to_sql()
         from_clause += f' {self.join_type_3.value} JOIN {self.table3.__name__.lower()} ON {on_3_clause}'
 
-        return f'SELECT {selections} FROM {from_clause}{where_clause};'
+        return f'SELECT {selections} FROM {from_clause}{where_clause}{order_by_clause};'
 
     def to_sql_params(self) -> Tuple[str, List[Any]]:
         assert len(self._selection) > 0, 'You must select at least one column'
@@ -400,6 +465,7 @@ class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialMode
         assert self.on_3 is not None, 'You must specify a join condition for join 3'
 
         selections = ', '.join(_qualified_label(p) for p in self._selection)
+        order_by_clause = _order_by_sql(self._order_by, qualify=True)
         params: List[Any] = []
 
         on_2_clause, on_2_params = self.on_2.to_sql_params()
@@ -410,10 +476,10 @@ class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialMode
         from_clause += f' {self.join_type_3.value} JOIN {self.table3.__name__.lower()} ON {on_3_clause}'
 
         if self._where is None:
-            return f'SELECT {selections} FROM {from_clause};', params
+            return f'SELECT {selections} FROM {from_clause}{order_by_clause};', params
         where_clause, where_params = self._where.to_sql_params()
         params += where_params
-        return f'SELECT {selections} FROM {from_clause} WHERE {where_clause};', params
+        return f'SELECT {selections} FROM {from_clause} WHERE {where_clause}{order_by_clause};', params
 
 @dataclass(frozen=True)
 class JoinQuery4(Generic[TC, TC1, TC2, TC3]):
@@ -428,15 +494,23 @@ class JoinQuery4(Generic[TC, TC1, TC2, TC3]):
     join_type_4: JoinType
     on_4: Constraint4[TC, TC1, TC2, TC3] | None
     _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]] | None = None
+    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3]] = ()
 
     def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
-        return JoinQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [sel, *sels])
+        return JoinQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [sel, *sels], self._order_by)
 
     def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
-        return JoinQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [*(self._selection or []), sel, *sels])
+        return JoinQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [*(self._selection or []), sel, *sels], self._order_by)
+
+    def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3]) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
+        return JoinQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, list(order_by))
+
+    def order_by_more(self, column: Prop[TC, Any] | PropOpt[TC, Any] | Prop[TC1, Any] | PropOpt[TC1, Any] | Prop[TC2, Any] | PropOpt[TC2, Any] | Prop[TC3, Any] | PropOpt[TC3, Any], direction: Direction = Direction.ASC) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
+        new_entry: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3] = OrderBy(column, direction) # type: ignore[assignment]
+        return JoinQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, [*self._order_by, new_entry])
 
     def where(self, constraint: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'Query4[TC, TC1, TC2, TC3]':
-        return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, _resolve_selection(self._selection, self.table1, self.table2, self.table3, self.table4), constraint)
+        return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, _resolve_selection(self._selection, self.table1, self.table2, self.table3, self.table4), constraint, self._order_by)
 
 @dataclass(frozen=True)
 class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2], PartialModel[TC3]]]):
@@ -452,15 +526,23 @@ class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], Partia
     on_4: Constraint4[TC, TC1, TC2, TC3] | None
     _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]]
     _where: Constraint4[TC, TC1, TC2, TC3] | None = None
+    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3]] = ()
 
     def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'Query4[TC, TC1, TC2, TC3]':
-        return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [sel, *sels], self._where)
+        return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [sel, *sels], self._where, self._order_by)
 
     def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'Query4[TC, TC1, TC2, TC3]':
-        return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [*self._selection, sel, *sels], self._where)
+        return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [*self._selection, sel, *sels], self._where, self._order_by)
 
     def where(self, constraint: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'Query4[TC, TC1, TC2, TC3]':
-        return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, constraint)
+        return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, constraint, self._order_by)
+
+    def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3]) -> 'Query4[TC, TC1, TC2, TC3]':
+        return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._where, list(order_by))
+
+    def order_by_more(self, column: Prop[TC, Any] | PropOpt[TC, Any] | Prop[TC1, Any] | PropOpt[TC1, Any] | Prop[TC2, Any] | PropOpt[TC2, Any] | Prop[TC3, Any] | PropOpt[TC3, Any], direction: Direction = Direction.ASC) -> 'Query4[TC, TC1, TC2, TC3]':
+        new_entry: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3] = OrderBy(column, direction) # type: ignore[assignment]
+        return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._where, [*self._order_by, new_entry])
 
     def to_sql(self) -> str:
         assert len(self._selection) > 0, 'You must select at least one column'
@@ -470,6 +552,7 @@ class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], Partia
 
         selections = ', '.join(_qualified_label(p) for p in self._selection)
         where_clause = '' if self._where is None else ' WHERE ' + self._where.to_sql()
+        order_by_clause = _order_by_sql(self._order_by, qualify=True)
 
         from_clause = f'{self.table1.__name__.lower()}'
         on_2_clause = self.on_2.to_sql()
@@ -479,7 +562,7 @@ class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], Partia
         on_4_clause = self.on_4.to_sql()
         from_clause += f' {self.join_type_4.value} JOIN {self.table4.__name__.lower()} ON {on_4_clause}'
 
-        return f'SELECT {selections} FROM {from_clause}{where_clause};'
+        return f'SELECT {selections} FROM {from_clause}{where_clause}{order_by_clause};'
 
     def to_sql_params(self) -> Tuple[str, List[Any]]:
         assert len(self._selection) > 0, 'You must select at least one column'
@@ -488,6 +571,7 @@ class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], Partia
         assert self.on_4 is not None, 'You must specify a join condition for join 4'
 
         selections = ', '.join(_qualified_label(p) for p in self._selection)
+        order_by_clause = _order_by_sql(self._order_by, qualify=True)
         params: List[Any] = []
 
         on_2_clause, on_2_params = self.on_2.to_sql_params()
@@ -501,7 +585,7 @@ class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], Partia
         from_clause += f' {self.join_type_4.value} JOIN {self.table4.__name__.lower()} ON {on_4_clause}'
 
         if self._where is None:
-            return f'SELECT {selections} FROM {from_clause};', params
+            return f'SELECT {selections} FROM {from_clause}{order_by_clause};', params
         where_clause, where_params = self._where.to_sql_params()
         params += where_params
-        return f'SELECT {selections} FROM {from_clause} WHERE {where_clause};', params
+        return f'SELECT {selections} FROM {from_clause} WHERE {where_clause}{order_by_clause};', params
