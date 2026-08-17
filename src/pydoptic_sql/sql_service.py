@@ -175,7 +175,8 @@ class PsycoPgSqlTransaction(SqlTransaction):
         self.cursor.close()
 
     def execute(self, query: SqlQuery[R]) -> SqlResponse[R]:
-        self.cursor.execute(query.to_sql())
+        sql, params = query.to_sql_params()
+        self.cursor.execute(sql, params)
         match query:
             case Query1():
                 # Query1[TC]'s R is always PartialModel[TC], which is exactly the caller's R here,

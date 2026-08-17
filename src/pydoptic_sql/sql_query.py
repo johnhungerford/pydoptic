@@ -24,6 +24,12 @@ R = TypeVar('R')
 class SqlQuery(Generic[R]):
     # R is the result type of executing the query (e.g. PartialModel[TC], or None); table type(s) are tracked separately per subclass.
     def to_sql(self) -> str:
+        """Render this query as a single SQL string with values interpolated -- for display/debugging only."""
+        raise NotImplementedError()
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        """Render this query as a parameterized SQL string (`%s` placeholders) plus its bound values, in order --
+        what actually gets executed, so data values are never interpolated into the SQL text itself."""
         raise NotImplementedError()
 
     @classmethod
@@ -112,6 +118,14 @@ class Query1(Generic[TC], SqlQuery[PartialModel[TC]]):
         where_clause = '' if self._where is None else (' WHERE ' + self._where.to_sql())
         return f'SELECT {selections} FROM {self.table1.__name__.lower()}{where_clause};'
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        assert len(self._selection) > 0, 'You must select at least one column'
+        selections = ', '.join(p.label for p in self._selection)
+        if self._where is None:
+            return f'SELECT {selections} FROM {self.table1.__name__.lower()};', []
+        where_clause, params = self._where.to_sql_params()
+        return f'SELECT {selections} FROM {self.table1.__name__.lower()} WHERE {where_clause};', params
+
 
 # --- CREATE / DROP / INSERT / UPDATE / DELETE (always single-table) ---
 
@@ -121,6 +135,9 @@ class DropQuery(Generic[TC], SqlQuery[None]):
 
     def to_sql(self) -> str:
         return f'DROP TABLE {self._model.__name__.lower()};'
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        return self.to_sql(), []
 
 def _sql_literal(value: Any) -> str:
     if value is None:
@@ -167,20 +184,33 @@ class CreateQuery(Generic[TC], SqlQuery[None]):
 
         return header + ',\n'.join(columns) + footer
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        # DDL: any literal values here (e.g. a Default constraint's value) come from the model
+        # definition in code, not runtime data, so there's nothing to parameterize.
+        return self.to_sql(), []
+
 
 @dataclass(frozen=True)
 class InsertQuery(Generic[TC], SqlQuery[None]):
     row: TC
 
-    def to_sql(self) -> str:
+    def _row_values(self) -> List[Any]:
         values: List[Any] = []
         for prop in self.row.__class__.properties().values():
             if isinstance(prop, Prop):
                 values.append(prop.get_val(self.row))
             elif isinstance(prop, PropOpt):
                 values.append(prop.get_val(self.row))
-        values_sql = ', '.join(_sql_literal(v) for v in values)
+        return values
+
+    def to_sql(self) -> str:
+        values_sql = ', '.join(_sql_literal(v) for v in self._row_values())
         return f'INSERT INTO {self.row.__class__.__name__.lower()} VALUES ({values_sql});'
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        values = self._row_values()
+        placeholders = ', '.join(['%s'] * len(values))
+        return f'INSERT INTO {self.row.__class__.__name__.lower()} VALUES ({placeholders});', values
 
 @dataclass(frozen=True)
 class UpdateQuery(Generic[TC], SqlQuery[None]):
@@ -197,6 +227,15 @@ class UpdateQuery(Generic[TC], SqlQuery[None]):
         where_clause = '' if self._where is None else (' WHERE ' + self._where.to_sql())
         return f'UPDATE {self._model.__name__.lower()} SET {assignments}{where_clause};'
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        assert len(self._values) > 0, 'You must set at least one value'
+        assignments = ', '.join(f'{p.label} = %s' for p in self._values)
+        params: List[Any] = [p.value for p in self._values]
+        if self._where is None:
+            return f'UPDATE {self._model.__name__.lower()} SET {assignments};', params
+        where_clause, where_params = self._where.to_sql_params()
+        return f'UPDATE {self._model.__name__.lower()} SET {assignments} WHERE {where_clause};', params + where_params
+
 @dataclass(frozen=True)
 class DeleteQuery(Generic[TC], SqlQuery[None]):
     _model: Type[TC]
@@ -208,6 +247,12 @@ class DeleteQuery(Generic[TC], SqlQuery[None]):
     def to_sql(self) -> str:
         where_clause = '' if self._where is None else (' WHERE ' + self._where.to_sql())
         return f'DELETE FROM {self._model.__name__.lower()}{where_clause};'
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        if self._where is None:
+            return f'DELETE FROM {self._model.__name__.lower()};', []
+        where_clause, params = self._where.to_sql_params()
+        return f'DELETE FROM {self._model.__name__.lower()} WHERE {where_clause};', params
 
 
 # --- 2-4 tables: JoinQueryN (builder) -> QueryN (terminal) ---
@@ -268,6 +313,23 @@ class Query2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1
         from_clause += f' {self.join_type_2.value} JOIN {self.table2.__name__.lower()} ON {on_2_clause}'
 
         return f'SELECT {selections} FROM {from_clause}{where_clause};'
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        assert len(self._selection) > 0, 'You must select at least one column'
+        assert self.on_2 is not None, 'You must specify a join condition for join 2'
+
+        selections = ', '.join(_qualified_label(p) for p in self._selection)
+        params: List[Any] = []
+
+        on_2_clause, on_2_params = self.on_2.to_sql_params()
+        params += on_2_params
+        from_clause = f'{self.table1.__name__.lower()} {self.join_type_2.value} JOIN {self.table2.__name__.lower()} ON {on_2_clause}'
+
+        if self._where is None:
+            return f'SELECT {selections} FROM {from_clause};', params
+        where_clause, where_params = self._where.to_sql_params()
+        params += where_params
+        return f'SELECT {selections} FROM {from_clause} WHERE {where_clause};', params
 
 @dataclass(frozen=True)
 class JoinQuery3(Generic[TC, TC1, TC2]):
@@ -331,6 +393,27 @@ class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialMode
         from_clause += f' {self.join_type_3.value} JOIN {self.table3.__name__.lower()} ON {on_3_clause}'
 
         return f'SELECT {selections} FROM {from_clause}{where_clause};'
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        assert len(self._selection) > 0, 'You must select at least one column'
+        assert self.on_2 is not None, 'You must specify a join condition for join 2'
+        assert self.on_3 is not None, 'You must specify a join condition for join 3'
+
+        selections = ', '.join(_qualified_label(p) for p in self._selection)
+        params: List[Any] = []
+
+        on_2_clause, on_2_params = self.on_2.to_sql_params()
+        params += on_2_params
+        from_clause = f'{self.table1.__name__.lower()} {self.join_type_2.value} JOIN {self.table2.__name__.lower()} ON {on_2_clause}'
+        on_3_clause, on_3_params = self.on_3.to_sql_params()
+        params += on_3_params
+        from_clause += f' {self.join_type_3.value} JOIN {self.table3.__name__.lower()} ON {on_3_clause}'
+
+        if self._where is None:
+            return f'SELECT {selections} FROM {from_clause};', params
+        where_clause, where_params = self._where.to_sql_params()
+        params += where_params
+        return f'SELECT {selections} FROM {from_clause} WHERE {where_clause};', params
 
 @dataclass(frozen=True)
 class JoinQuery4(Generic[TC, TC1, TC2, TC3]):
@@ -397,3 +480,28 @@ class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], Partia
         from_clause += f' {self.join_type_4.value} JOIN {self.table4.__name__.lower()} ON {on_4_clause}'
 
         return f'SELECT {selections} FROM {from_clause}{where_clause};'
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        assert len(self._selection) > 0, 'You must select at least one column'
+        assert self.on_2 is not None, 'You must specify a join condition for join 2'
+        assert self.on_3 is not None, 'You must specify a join condition for join 3'
+        assert self.on_4 is not None, 'You must specify a join condition for join 4'
+
+        selections = ', '.join(_qualified_label(p) for p in self._selection)
+        params: List[Any] = []
+
+        on_2_clause, on_2_params = self.on_2.to_sql_params()
+        params += on_2_params
+        from_clause = f'{self.table1.__name__.lower()} {self.join_type_2.value} JOIN {self.table2.__name__.lower()} ON {on_2_clause}'
+        on_3_clause, on_3_params = self.on_3.to_sql_params()
+        params += on_3_params
+        from_clause += f' {self.join_type_3.value} JOIN {self.table3.__name__.lower()} ON {on_3_clause}'
+        on_4_clause, on_4_params = self.on_4.to_sql_params()
+        params += on_4_params
+        from_clause += f' {self.join_type_4.value} JOIN {self.table4.__name__.lower()} ON {on_4_clause}'
+
+        if self._where is None:
+            return f'SELECT {selections} FROM {from_clause};', params
+        where_clause, where_params = self._where.to_sql_params()
+        params += where_params
+        return f'SELECT {selections} FROM {from_clause} WHERE {where_clause};', params

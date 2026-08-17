@@ -1,7 +1,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Generic, List, Sequence, TypeVar
+from typing import Any, Generic, List, Sequence, Tuple, TypeVar
 
 from pydoptic.selector import PropSelect, Prop, PropOpt
 from pydoptic_sql import SqlTable
@@ -14,6 +14,16 @@ TC3 = TypeVar('TC3', bound=SqlTable, contravariant=True)
 
 def _qualified_label(prop: PropSelect[Any, Any]) -> str:
     return f'{prop.origin.__name__.lower()}.{prop.label}'
+
+def _render_value(value: Any, qualify: bool) -> Tuple[str, List[Any]]:
+    """
+    Render a constraint operand: a `PropSelect` becomes a (possibly table-qualified) column
+    reference with no params, anything else becomes a `%s` placeholder bound to that value --
+    letting psycopg's own adapters handle quoting/escaping instead of interpolating it as text.
+    """
+    if isinstance(value, PropSelect):
+        return (_qualified_label(value) if qualify else value.label), []
+    return '%s', [value]
 
 class Comparison(Enum):
     EQ = 1
@@ -46,6 +56,9 @@ def _comparison_symbol(comp: Comparison) -> str:
 
 class Constraint(Generic[TC]):
     def to_sql(self) -> str:
+        raise NotImplementedError()
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
         raise NotImplementedError()
 
     @classmethod
@@ -109,6 +122,12 @@ class OrConstraint(Constraint[TC]):
     def to_sql(self) -> str:
         return '(' + ' OR '.join(c.to_sql() for c in self.constraints) + ')'
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        parts_params = [c.to_sql_params() for c in self.constraints]
+        sql = '(' + ' OR '.join(part for part, _ in parts_params) + ')'
+        params = [p for _, params in parts_params for p in params]
+        return sql, params
+
 @dataclass(frozen=True)
 class AndConstraint(Constraint[TC]):
     constraints: List[Constraint[TC]]
@@ -116,12 +135,22 @@ class AndConstraint(Constraint[TC]):
     def to_sql(self) -> str:
         return '(' + ' AND '.join(c.to_sql() for c in self.constraints) + ')'
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        parts_params = [c.to_sql_params() for c in self.constraints]
+        sql = '(' + ' AND '.join(part for part, _ in parts_params) + ')'
+        params = [p for _, params in parts_params for p in params]
+        return sql, params
+
 @dataclass(frozen=True)
 class NotConstraint(Constraint[TC]):
     constraint: Constraint[TC]
 
     def to_sql(self) -> str:
         return 'NOT (' + self.constraint.to_sql() + ')'
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        sql, params = self.constraint.to_sql_params()
+        return 'NOT (' + sql + ')', params
 
 @dataclass(frozen=True)
 class CompConstraint(Generic[TC, A], Constraint[TC]):
@@ -138,6 +167,10 @@ class CompConstraint(Generic[TC, A], Constraint[TC]):
                 value_2 = "'" + value_2 + "'"
         return self.value_1.label + ' ' + _comparison_symbol(self.comp) + ' ' + value_2
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        value_2, params = _render_value(self.value_2, qualify=False)
+        return self.value_1.label + ' ' + _comparison_symbol(self.comp) + ' ' + value_2, params
+
 @dataclass(frozen=True)
 class BetweenConstraint(Generic[TC, A], Constraint[TC]):
     value: Prop[TC, A] | PropOpt[TC, A]
@@ -148,6 +181,11 @@ class BetweenConstraint(Generic[TC, A], Constraint[TC]):
         lower = self.lower.label if isinstance(self.lower, PropSelect) else str(self.lower)
         upper = self.upper.label if isinstance(self.upper, PropSelect) else str(self.upper)
         return f'{self.value.label} BETWEEN {lower} AND {upper}'
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        lower, lower_params = _render_value(self.lower, qualify=False)
+        upper, upper_params = _render_value(self.upper, qualify=False)
+        return f'{self.value.label} BETWEEN {lower} AND {upper}', lower_params + upper_params
 
 @dataclass(frozen=True)
 class InConstraint(Generic[TC, A], Constraint[TC]):
@@ -166,6 +204,12 @@ class InConstraint(Generic[TC, A], Constraint[TC]):
         values = [render(c) for c in self.values]
         return f'{self.value.label} IN ({", ".join(values)})'
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        rendered = [_render_value(c, qualify=False) for c in self.values]
+        sql = f'{self.value.label} IN ({", ".join(part for part, _ in rendered)})'
+        params = [p for _, params in rendered for p in params]
+        return sql, params
+
 
 # --- arity 2: constraints over a pair of joined tables ---
 # Column references always render table-qualified ("table.column"), since a constraint here may
@@ -173,6 +217,9 @@ class InConstraint(Generic[TC, A], Constraint[TC]):
 
 class Constraint2(Generic[TC, TC1]):
     def to_sql(self) -> str:
+        raise NotImplementedError()
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
         raise NotImplementedError()
 
     @classmethod
@@ -245,6 +292,12 @@ class OrConstraint2(Constraint2[TC, TC1]):
     def to_sql(self) -> str:
         return '(' + ' OR '.join(c.to_sql() for c in self.constraints) + ')'
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        parts_params = [c.to_sql_params() for c in self.constraints]
+        sql = '(' + ' OR '.join(part for part, _ in parts_params) + ')'
+        params = [p for _, params in parts_params for p in params]
+        return sql, params
+
 @dataclass(frozen=True)
 class AndConstraint2(Constraint2[TC, TC1]):
     constraints: List[Constraint2[TC, TC1]]
@@ -252,12 +305,22 @@ class AndConstraint2(Constraint2[TC, TC1]):
     def to_sql(self) -> str:
         return '(' + ' AND '.join(c.to_sql() for c in self.constraints) + ')'
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        parts_params = [c.to_sql_params() for c in self.constraints]
+        sql = '(' + ' AND '.join(part for part, _ in parts_params) + ')'
+        params = [p for _, params in parts_params for p in params]
+        return sql, params
+
 @dataclass(frozen=True)
 class NotConstraint2(Constraint2[TC, TC1]):
     constraint: Constraint2[TC, TC1]
 
     def to_sql(self) -> str:
         return 'NOT (' + self.constraint.to_sql() + ')'
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        sql, params = self.constraint.to_sql_params()
+        return 'NOT (' + sql + ')', params
 
 @dataclass(frozen=True)
 class CompConstraint2(Generic[TC, TC1, A], Constraint2[TC, TC1]):
@@ -274,6 +337,10 @@ class CompConstraint2(Generic[TC, TC1, A], Constraint2[TC, TC1]):
                 value_2 = "'" + value_2 + "'"
         return _qualified_label(self.value_1) + ' ' + _comparison_symbol(self.comp) + ' ' + value_2
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        value_2, params = _render_value(self.value_2, qualify=True)
+        return _qualified_label(self.value_1) + ' ' + _comparison_symbol(self.comp) + ' ' + value_2, params
+
 @dataclass(frozen=True)
 class BetweenConstraint2(Generic[TC, TC1, A], Constraint2[TC, TC1]):
     value: Prop[TC, A] | PropOpt[TC, A] | Prop[TC1, A] | PropOpt[TC1, A]
@@ -284,6 +351,11 @@ class BetweenConstraint2(Generic[TC, TC1, A], Constraint2[TC, TC1]):
         lower = _qualified_label(self.lower) if isinstance(self.lower, PropSelect) else str(self.lower)
         upper = _qualified_label(self.upper) if isinstance(self.upper, PropSelect) else str(self.upper)
         return f'{_qualified_label(self.value)} BETWEEN {lower} AND {upper}'
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        lower, lower_params = _render_value(self.lower, qualify=True)
+        upper, upper_params = _render_value(self.upper, qualify=True)
+        return f'{_qualified_label(self.value)} BETWEEN {lower} AND {upper}', lower_params + upper_params
 
 @dataclass(frozen=True)
 class InConstraint2(Generic[TC, TC1, A], Constraint2[TC, TC1]):
@@ -302,12 +374,21 @@ class InConstraint2(Generic[TC, TC1, A], Constraint2[TC, TC1]):
         values = [render(c) for c in self.values]
         return f'{_qualified_label(self.value)} IN ({", ".join(values)})'
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        rendered = [_render_value(c, qualify=True) for c in self.values]
+        sql = f'{_qualified_label(self.value)} IN ({", ".join(part for part, _ in rendered)})'
+        params = [p for _, params in rendered for p in params]
+        return sql, params
+
 # --- arity 3: constraints over 3 joined tables ---
 # Column references always render table-qualified ("table.column"), since a constraint here may
 # reference any of the joined tables and there's no other way to disambiguate.
 
 class Constraint3(Generic[TC, TC1, TC2]):
     def to_sql(self) -> str:
+        raise NotImplementedError()
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
         raise NotImplementedError()
 
     @classmethod
@@ -380,6 +461,12 @@ class OrConstraint3(Constraint3[TC, TC1, TC2]):
     def to_sql(self) -> str:
         return '(' + ' OR '.join(c.to_sql() for c in self.constraints) + ')'
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        parts_params = [c.to_sql_params() for c in self.constraints]
+        sql = '(' + ' OR '.join(part for part, _ in parts_params) + ')'
+        params = [p for _, params in parts_params for p in params]
+        return sql, params
+
 @dataclass(frozen=True)
 class AndConstraint3(Constraint3[TC, TC1, TC2]):
     constraints: List[Constraint3[TC, TC1, TC2]]
@@ -387,12 +474,22 @@ class AndConstraint3(Constraint3[TC, TC1, TC2]):
     def to_sql(self) -> str:
         return '(' + ' AND '.join(c.to_sql() for c in self.constraints) + ')'
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        parts_params = [c.to_sql_params() for c in self.constraints]
+        sql = '(' + ' AND '.join(part for part, _ in parts_params) + ')'
+        params = [p for _, params in parts_params for p in params]
+        return sql, params
+
 @dataclass(frozen=True)
 class NotConstraint3(Constraint3[TC, TC1, TC2]):
     constraint: Constraint3[TC, TC1, TC2]
 
     def to_sql(self) -> str:
         return 'NOT (' + self.constraint.to_sql() + ')'
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        sql, params = self.constraint.to_sql_params()
+        return 'NOT (' + sql + ')', params
 
 @dataclass(frozen=True)
 class CompConstraint3(Generic[TC, TC1, TC2, A], Constraint3[TC, TC1, TC2]):
@@ -409,6 +506,10 @@ class CompConstraint3(Generic[TC, TC1, TC2, A], Constraint3[TC, TC1, TC2]):
                 value_2 = "'" + value_2 + "'"
         return _qualified_label(self.value_1) + ' ' + _comparison_symbol(self.comp) + ' ' + value_2
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        value_2, params = _render_value(self.value_2, qualify=True)
+        return _qualified_label(self.value_1) + ' ' + _comparison_symbol(self.comp) + ' ' + value_2, params
+
 @dataclass(frozen=True)
 class BetweenConstraint3(Generic[TC, TC1, TC2, A], Constraint3[TC, TC1, TC2]):
     value: Prop[TC, A] | PropOpt[TC, A] | Prop[TC1, A] | PropOpt[TC1, A] | Prop[TC2, A] | PropOpt[TC2, A]
@@ -419,6 +520,11 @@ class BetweenConstraint3(Generic[TC, TC1, TC2, A], Constraint3[TC, TC1, TC2]):
         lower = _qualified_label(self.lower) if isinstance(self.lower, PropSelect) else str(self.lower)
         upper = _qualified_label(self.upper) if isinstance(self.upper, PropSelect) else str(self.upper)
         return f'{_qualified_label(self.value)} BETWEEN {lower} AND {upper}'
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        lower, lower_params = _render_value(self.lower, qualify=True)
+        upper, upper_params = _render_value(self.upper, qualify=True)
+        return f'{_qualified_label(self.value)} BETWEEN {lower} AND {upper}', lower_params + upper_params
 
 @dataclass(frozen=True)
 class InConstraint3(Generic[TC, TC1, TC2, A], Constraint3[TC, TC1, TC2]):
@@ -437,12 +543,21 @@ class InConstraint3(Generic[TC, TC1, TC2, A], Constraint3[TC, TC1, TC2]):
         values = [render(c) for c in self.values]
         return f'{_qualified_label(self.value)} IN ({", ".join(values)})'
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        rendered = [_render_value(c, qualify=True) for c in self.values]
+        sql = f'{_qualified_label(self.value)} IN ({", ".join(part for part, _ in rendered)})'
+        params = [p for _, params in rendered for p in params]
+        return sql, params
+
 # --- arity 4: constraints over 4 joined tables ---
 # Column references always render table-qualified ("table.column"), since a constraint here may
 # reference any of the joined tables and there's no other way to disambiguate.
 
 class Constraint4(Generic[TC, TC1, TC2, TC3]):
     def to_sql(self) -> str:
+        raise NotImplementedError()
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
         raise NotImplementedError()
 
     @classmethod
@@ -515,6 +630,12 @@ class OrConstraint4(Constraint4[TC, TC1, TC2, TC3]):
     def to_sql(self) -> str:
         return '(' + ' OR '.join(c.to_sql() for c in self.constraints) + ')'
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        parts_params = [c.to_sql_params() for c in self.constraints]
+        sql = '(' + ' OR '.join(part for part, _ in parts_params) + ')'
+        params = [p for _, params in parts_params for p in params]
+        return sql, params
+
 @dataclass(frozen=True)
 class AndConstraint4(Constraint4[TC, TC1, TC2, TC3]):
     constraints: List[Constraint4[TC, TC1, TC2, TC3]]
@@ -522,12 +643,22 @@ class AndConstraint4(Constraint4[TC, TC1, TC2, TC3]):
     def to_sql(self) -> str:
         return '(' + ' AND '.join(c.to_sql() for c in self.constraints) + ')'
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        parts_params = [c.to_sql_params() for c in self.constraints]
+        sql = '(' + ' AND '.join(part for part, _ in parts_params) + ')'
+        params = [p for _, params in parts_params for p in params]
+        return sql, params
+
 @dataclass(frozen=True)
 class NotConstraint4(Constraint4[TC, TC1, TC2, TC3]):
     constraint: Constraint4[TC, TC1, TC2, TC3]
 
     def to_sql(self) -> str:
         return 'NOT (' + self.constraint.to_sql() + ')'
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        sql, params = self.constraint.to_sql_params()
+        return 'NOT (' + sql + ')', params
 
 @dataclass(frozen=True)
 class CompConstraint4(Generic[TC, TC1, TC2, TC3, A], Constraint4[TC, TC1, TC2, TC3]):
@@ -544,6 +675,10 @@ class CompConstraint4(Generic[TC, TC1, TC2, TC3, A], Constraint4[TC, TC1, TC2, T
                 value_2 = "'" + value_2 + "'"
         return _qualified_label(self.value_1) + ' ' + _comparison_symbol(self.comp) + ' ' + value_2
 
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        value_2, params = _render_value(self.value_2, qualify=True)
+        return _qualified_label(self.value_1) + ' ' + _comparison_symbol(self.comp) + ' ' + value_2, params
+
 @dataclass(frozen=True)
 class BetweenConstraint4(Generic[TC, TC1, TC2, TC3, A], Constraint4[TC, TC1, TC2, TC3]):
     value: Prop[TC, A] | PropOpt[TC, A] | Prop[TC1, A] | PropOpt[TC1, A] | Prop[TC2, A] | PropOpt[TC2, A] | Prop[TC3, A] | PropOpt[TC3, A]
@@ -554,6 +689,11 @@ class BetweenConstraint4(Generic[TC, TC1, TC2, TC3, A], Constraint4[TC, TC1, TC2
         lower = _qualified_label(self.lower) if isinstance(self.lower, PropSelect) else str(self.lower)
         upper = _qualified_label(self.upper) if isinstance(self.upper, PropSelect) else str(self.upper)
         return f'{_qualified_label(self.value)} BETWEEN {lower} AND {upper}'
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        lower, lower_params = _render_value(self.lower, qualify=True)
+        upper, upper_params = _render_value(self.upper, qualify=True)
+        return f'{_qualified_label(self.value)} BETWEEN {lower} AND {upper}', lower_params + upper_params
 
 @dataclass(frozen=True)
 class InConstraint4(Generic[TC, TC1, TC2, TC3, A], Constraint4[TC, TC1, TC2, TC3]):
@@ -571,3 +711,9 @@ class InConstraint4(Generic[TC, TC1, TC2, TC3, A], Constraint4[TC, TC1, TC2, TC3
 
         values = [render(c) for c in self.values]
         return f'{_qualified_label(self.value)} IN ({", ".join(values)})'
+
+    def to_sql_params(self) -> Tuple[str, List[Any]]:
+        rendered = [_render_value(c, qualify=True) for c in self.values]
+        sql = f'{_qualified_label(self.value)} IN ({", ".join(part for part, _ in rendered)})'
+        params = [p for _, params in rendered for p in params]
+        return sql, params

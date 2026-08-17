@@ -104,7 +104,7 @@ print(person.name)
 # John
 ```
 
-On initialization, the mode class constructs the `Prop` class attributes based on the type hints and keeps track of them internally. It then uses the known properties to validate keyword arguments that are provided when constructing a class instance. The above succeeds even though `organizations` is missing because organizations is a `PropOptArr`, which is optional. If we left out `name`, however, it would raise a `ValueError`.
+On initialization, the model class constructs the `Prop` class attributes based on the type hints and keeps track of them internally. It then uses the known properties to validate keyword arguments that are provided when constructing a class instance. The above succeeds even though `organizations` is missing because organizations is a `PropOptArr`, which is optional. If we left out `name`, however, it would raise a `ValueError`.
 
 Note that your type checker will complain that `person.name` is a `Prop` instead of a `str`. While Pydoptic does assign properties as model attributes (the `Prop` types should be defined only on the class), your type checker will not know this. The "Pydoptic" way to retrieve properties is not to access the attribute directly, but use the property itself!
 
