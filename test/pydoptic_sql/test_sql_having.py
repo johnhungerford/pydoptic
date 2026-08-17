@@ -1,5 +1,3 @@
-import pytest
-
 from pydoptic_sql import SqlTable, ColumnType, PrimaryKey, column, SqlQuery, Constraint, Constraint2, Constraint3, HavingConstraint, HavingConstraint2, HavingConstraint3
 from pydoptic import Prop
 
@@ -166,7 +164,7 @@ def test_having_available_on_builder_before_where():
     assert finalized.to_sql() == 'SELECT department_id, SUM(age) AS worker_age_sum FROM worker GROUP BY department_id HAVING SUM(age) > 100;'
 
 
-# --- joined queries: having across joined tables, and the join-after-having restriction ---
+# --- joined queries: having across joined tables, and having() set before a join ---
 
 def test_having_on_joined_query_references_computed_from_joined_table():
     total = SqlQuery.sum(Worker.age)
@@ -180,15 +178,34 @@ def test_having_on_joined_query_references_computed_from_joined_table():
         'GROUP BY department.name HAVING SUM(worker.age) > 50;'
     )
 
-def test_having_set_before_join_is_rejected():
-    # A HavingConstraintN is a distinct, unrelated class per arity (unlike OrderBy/Computed, which
-    # are one class widened via unions), so an already-set having constraint can't be safely
-    # re-typed for a wider join arity. join_inner/join_left must come before having().
+def test_having_set_before_join_widens_automatically():
+    # HavingConstraint.incr_arity() (see sql_constraint.py/sql_having.py) lets an already-set having
+    # constraint safely widen to the next join arity, so join_inner/join_left no longer need to come
+    # before having() -- the same operands just get rewrapped into the wider HavingConstraint2.
     total = SqlQuery.sum(Worker.age)
-    query = SqlQuery.from_table(Worker).select_computed(total).having(HavingConstraint.gt(total, 100))
+    query = SqlQuery.from_table(Worker).select_computed(total).having(HavingConstraint.gt(total, 100)).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).select(Department.name).group_by(Department.name).where()
 
-    with pytest.raises(AssertionError):
-        query.join_inner(Department, Constraint2.eq(Worker.department_id, Department.id))
+    assert query.to_sql() == (
+        'SELECT department.name, SUM(worker.age) AS worker_age_sum FROM worker '
+        'INNER JOIN department ON worker.department_id = department.id '
+        'GROUP BY department.name HAVING SUM(worker.age) > 100;'
+    )
+
+def test_where_and_having_both_widen_across_the_same_join():
+    total = SqlQuery.sum(Worker.age)
+    query = SqlQuery.from_table(Worker).where(Constraint.gt(Worker.age, 18)).select_computed(total).having(
+        HavingConstraint.gt(total, 100),
+    ).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).select(Department.name).group_by(Department.name)
+
+    assert query.to_sql() == (
+        'SELECT department.name, SUM(worker.age) AS worker_age_sum FROM worker '
+        'INNER JOIN department ON worker.department_id = department.id '
+        'WHERE worker.age > 18 GROUP BY department.name HAVING SUM(worker.age) > 100;'
+    )
 
 def test_join_inner_still_works_before_having_is_set():
     total = SqlQuery.sum(Worker.age)

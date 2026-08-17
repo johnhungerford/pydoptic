@@ -61,6 +61,9 @@ class Constraint(Generic[TC]):
     def to_sql_params(self) -> Tuple[str, List[Any]]:
         raise NotImplementedError()
 
+    def incr_arity(self) -> 'Constraint2[TC, TC1]':
+        raise NotImplementedError()
+
     @classmethod
     def any(cls, *constraints: 'Constraint[TC]') -> 'OrConstraint[TC]':
         return OrConstraint(list(constraints))
@@ -128,6 +131,9 @@ class OrConstraint(Constraint[TC]):
         params = [p for _, params in parts_params for p in params]
         return sql, params
 
+    def incr_arity(self) -> 'OrConstraint2[TC, TC1]':
+        return OrConstraint2([c.incr_arity() for c in self.constraints])
+
 @dataclass(frozen=True)
 class AndConstraint(Constraint[TC]):
     constraints: List[Constraint[TC]]
@@ -141,6 +147,9 @@ class AndConstraint(Constraint[TC]):
         params = [p for _, params in parts_params for p in params]
         return sql, params
 
+    def incr_arity(self) -> 'AndConstraint2[TC, TC1]':
+        return AndConstraint2([c.incr_arity() for c in self.constraints])
+
 @dataclass(frozen=True)
 class NotConstraint(Constraint[TC]):
     constraint: Constraint[TC]
@@ -151,6 +160,9 @@ class NotConstraint(Constraint[TC]):
     def to_sql_params(self) -> Tuple[str, List[Any]]:
         sql, params = self.constraint.to_sql_params()
         return 'NOT (' + sql + ')', params
+
+    def incr_arity(self) -> 'NotConstraint2[TC, TC1]':
+        return NotConstraint2(self.constraint.incr_arity())
 
 @dataclass(frozen=True)
 class CompConstraint(Generic[TC, A], Constraint[TC]):
@@ -171,6 +183,9 @@ class CompConstraint(Generic[TC, A], Constraint[TC]):
         value_2, params = _render_value(self.value_2, qualify=False)
         return self.value_1.label + ' ' + _comparison_symbol(self.comp) + ' ' + value_2, params
 
+    def incr_arity(self) -> 'CompConstraint2[TC, TC1, A]':
+        return CompConstraint2(self.value_1, self.value_2, self.comp)
+
 @dataclass(frozen=True)
 class BetweenConstraint(Generic[TC, A], Constraint[TC]):
     value: Prop[TC, A] | PropOpt[TC, A]
@@ -186,6 +201,9 @@ class BetweenConstraint(Generic[TC, A], Constraint[TC]):
         lower, lower_params = _render_value(self.lower, qualify=False)
         upper, upper_params = _render_value(self.upper, qualify=False)
         return f'{self.value.label} BETWEEN {lower} AND {upper}', lower_params + upper_params
+
+    def incr_arity(self) -> 'BetweenConstraint2[TC, TC1, A]':
+        return BetweenConstraint2(self.value, self.lower, self.upper)
 
 @dataclass(frozen=True)
 class InConstraint(Generic[TC, A], Constraint[TC]):
@@ -210,6 +228,9 @@ class InConstraint(Generic[TC, A], Constraint[TC]):
         params = [p for _, params in rendered for p in params]
         return sql, params
 
+    def incr_arity(self) -> 'InConstraint2[TC, TC1, A]':
+        return InConstraint2(self.value, self.values)
+
 
 # --- arity 2: constraints over a pair of joined tables ---
 # Column references always render table-qualified ("table.column"), since a constraint here may
@@ -220,6 +241,9 @@ class Constraint2(Generic[TC, TC1]):
         raise NotImplementedError()
 
     def to_sql_params(self) -> Tuple[str, List[Any]]:
+        raise NotImplementedError()
+
+    def incr_arity(self) -> 'Constraint3[TC, TC1, TC2]':
         raise NotImplementedError()
 
     @classmethod
@@ -298,6 +322,9 @@ class OrConstraint2(Constraint2[TC, TC1]):
         params = [p for _, params in parts_params for p in params]
         return sql, params
 
+    def incr_arity(self) -> 'OrConstraint3[TC, TC1, TC2]':
+        return OrConstraint3([c.incr_arity() for c in self.constraints])
+
 @dataclass(frozen=True)
 class AndConstraint2(Constraint2[TC, TC1]):
     constraints: List[Constraint2[TC, TC1]]
@@ -311,6 +338,9 @@ class AndConstraint2(Constraint2[TC, TC1]):
         params = [p for _, params in parts_params for p in params]
         return sql, params
 
+    def incr_arity(self) -> 'AndConstraint3[TC, TC1, TC2]':
+        return AndConstraint3([c.incr_arity() for c in self.constraints])
+
 @dataclass(frozen=True)
 class NotConstraint2(Constraint2[TC, TC1]):
     constraint: Constraint2[TC, TC1]
@@ -321,6 +351,9 @@ class NotConstraint2(Constraint2[TC, TC1]):
     def to_sql_params(self) -> Tuple[str, List[Any]]:
         sql, params = self.constraint.to_sql_params()
         return 'NOT (' + sql + ')', params
+
+    def incr_arity(self) -> 'NotConstraint3[TC, TC1, TC2]':
+        return NotConstraint3(self.constraint.incr_arity())
 
 @dataclass(frozen=True)
 class CompConstraint2(Generic[TC, TC1, A], Constraint2[TC, TC1]):
@@ -341,6 +374,9 @@ class CompConstraint2(Generic[TC, TC1, A], Constraint2[TC, TC1]):
         value_2, params = _render_value(self.value_2, qualify=True)
         return _qualified_label(self.value_1) + ' ' + _comparison_symbol(self.comp) + ' ' + value_2, params
 
+    def incr_arity(self) -> 'CompConstraint3[TC, TC1, TC2, A]':
+        return CompConstraint3(self.value_1, self.value_2, self.comp)
+
 @dataclass(frozen=True)
 class BetweenConstraint2(Generic[TC, TC1, A], Constraint2[TC, TC1]):
     value: Prop[TC, A] | PropOpt[TC, A] | Prop[TC1, A] | PropOpt[TC1, A]
@@ -356,6 +392,9 @@ class BetweenConstraint2(Generic[TC, TC1, A], Constraint2[TC, TC1]):
         lower, lower_params = _render_value(self.lower, qualify=True)
         upper, upper_params = _render_value(self.upper, qualify=True)
         return f'{_qualified_label(self.value)} BETWEEN {lower} AND {upper}', lower_params + upper_params
+
+    def incr_arity(self) -> 'BetweenConstraint3[TC, TC1, TC2, A]':
+        return BetweenConstraint3(self.value, self.lower, self.upper)
 
 @dataclass(frozen=True)
 class InConstraint2(Generic[TC, TC1, A], Constraint2[TC, TC1]):
@@ -380,6 +419,9 @@ class InConstraint2(Generic[TC, TC1, A], Constraint2[TC, TC1]):
         params = [p for _, params in rendered for p in params]
         return sql, params
 
+    def incr_arity(self) -> 'InConstraint3[TC, TC1, TC2, A]':
+        return InConstraint3(self.value, self.values)
+
 # --- arity 3: constraints over 3 joined tables ---
 # Column references always render table-qualified ("table.column"), since a constraint here may
 # reference any of the joined tables and there's no other way to disambiguate.
@@ -389,6 +431,9 @@ class Constraint3(Generic[TC, TC1, TC2]):
         raise NotImplementedError()
 
     def to_sql_params(self) -> Tuple[str, List[Any]]:
+        raise NotImplementedError()
+
+    def incr_arity(self) -> 'Constraint4[TC, TC1, TC2, TC3]':
         raise NotImplementedError()
 
     @classmethod
@@ -467,6 +512,9 @@ class OrConstraint3(Constraint3[TC, TC1, TC2]):
         params = [p for _, params in parts_params for p in params]
         return sql, params
 
+    def incr_arity(self) -> 'OrConstraint4[TC, TC1, TC2, TC3]':
+        return OrConstraint4([c.incr_arity() for c in self.constraints])
+
 @dataclass(frozen=True)
 class AndConstraint3(Constraint3[TC, TC1, TC2]):
     constraints: List[Constraint3[TC, TC1, TC2]]
@@ -480,6 +528,9 @@ class AndConstraint3(Constraint3[TC, TC1, TC2]):
         params = [p for _, params in parts_params for p in params]
         return sql, params
 
+    def incr_arity(self) -> 'AndConstraint4[TC, TC1, TC2, TC3]':
+        return AndConstraint4([c.incr_arity() for c in self.constraints])
+
 @dataclass(frozen=True)
 class NotConstraint3(Constraint3[TC, TC1, TC2]):
     constraint: Constraint3[TC, TC1, TC2]
@@ -490,6 +541,9 @@ class NotConstraint3(Constraint3[TC, TC1, TC2]):
     def to_sql_params(self) -> Tuple[str, List[Any]]:
         sql, params = self.constraint.to_sql_params()
         return 'NOT (' + sql + ')', params
+
+    def incr_arity(self) -> 'NotConstraint4[TC, TC1, TC2, TC3]':
+        return NotConstraint4(self.constraint.incr_arity())
 
 @dataclass(frozen=True)
 class CompConstraint3(Generic[TC, TC1, TC2, A], Constraint3[TC, TC1, TC2]):
@@ -510,6 +564,9 @@ class CompConstraint3(Generic[TC, TC1, TC2, A], Constraint3[TC, TC1, TC2]):
         value_2, params = _render_value(self.value_2, qualify=True)
         return _qualified_label(self.value_1) + ' ' + _comparison_symbol(self.comp) + ' ' + value_2, params
 
+    def incr_arity(self) -> 'CompConstraint4[TC, TC1, TC2, TC3, A]':
+        return CompConstraint4(self.value_1, self.value_2, self.comp)
+
 @dataclass(frozen=True)
 class BetweenConstraint3(Generic[TC, TC1, TC2, A], Constraint3[TC, TC1, TC2]):
     value: Prop[TC, A] | PropOpt[TC, A] | Prop[TC1, A] | PropOpt[TC1, A] | Prop[TC2, A] | PropOpt[TC2, A]
@@ -525,6 +582,9 @@ class BetweenConstraint3(Generic[TC, TC1, TC2, A], Constraint3[TC, TC1, TC2]):
         lower, lower_params = _render_value(self.lower, qualify=True)
         upper, upper_params = _render_value(self.upper, qualify=True)
         return f'{_qualified_label(self.value)} BETWEEN {lower} AND {upper}', lower_params + upper_params
+
+    def incr_arity(self) -> 'BetweenConstraint4[TC, TC1, TC2, TC3, A]':
+        return BetweenConstraint4(self.value, self.lower, self.upper)
 
 @dataclass(frozen=True)
 class InConstraint3(Generic[TC, TC1, TC2, A], Constraint3[TC, TC1, TC2]):
@@ -548,6 +608,9 @@ class InConstraint3(Generic[TC, TC1, TC2, A], Constraint3[TC, TC1, TC2]):
         sql = f'{_qualified_label(self.value)} IN ({", ".join(part for part, _ in rendered)})'
         params = [p for _, params in rendered for p in params]
         return sql, params
+
+    def incr_arity(self) -> 'InConstraint4[TC, TC1, TC2, TC3, A]':
+        return InConstraint4(self.value, self.values)
 
 # --- arity 4: constraints over 4 joined tables ---
 # Column references always render table-qualified ("table.column"), since a constraint here may

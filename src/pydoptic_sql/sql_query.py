@@ -36,8 +36,8 @@ class SqlQuery(Generic[R]):
         raise NotImplementedError()
 
     @classmethod
-    def from_table(cls, table: Type[TC]) -> 'SelectQuery[TC]':
-        return SelectQuery(table)
+    def from_table(cls, table: Type[TC]) -> 'Query1[TC]':
+        return Query1(table)
 
     @classmethod
     def create(cls, table: Type[TC]) -> 'CreateQuery[TC]':
@@ -131,118 +131,33 @@ class JoinType(Enum):
     Inner = 'INNER'
 
 
-# --- 1 table: SelectQuery/SelectQueryComputed (builders) -> Query1/ComputedQuery1 (terminals) ---
-# select_computed(_more) is available on every builder and terminal class, not just the terminal one,
-# since aggregate columns will eventually need to be referenceable from constraints (e.g. a future
-# HAVING clause) that themselves need to be composable before/around WHERE, joins, etc. -- so a query
-# can pick up computed columns at any point in the chain, same as select/order_by/group_by can.
-
-@dataclass(frozen=True)
-class SelectQuery(Generic[TC]):
-    table1: Type[TC]
-    _selection: Sequence[PropSelect[TC, Any]] | None = None
-    _order_by: Sequence[OrderBy[TC]] = ()
-    _group_by: Sequence[PropSelect[TC, Any]] = ()
-
-    def select(self, sel: PropSelect[TC, Any], *sels: PropSelect[TC, Any]) -> 'SelectQuery[TC]':
-        return SelectQuery(self.table1, [sel, *sels], self._order_by, self._group_by)
-
-    def select_more(self, sel: PropSelect[TC, Any], *sels: PropSelect[TC, Any]) -> 'SelectQuery[TC]':
-        return SelectQuery(self.table1, [*(self._selection or []), sel, *sels], self._order_by, self._group_by)
-
-    def select_computed(self, computed: Computed[TC, Any], *more: Computed[TC, Any]) -> 'SelectQueryComputed[TC]':
-        return SelectQueryComputed(self.table1, self._selection, self._order_by, self._group_by, [computed, *more])
-
-    def select_computed_more(self, computed: Computed[TC, Any], *more: Computed[TC, Any]) -> 'SelectQueryComputed[TC]':
-        return SelectQueryComputed(self.table1, self._selection, self._order_by, self._group_by, [computed, *more])
-
-    def order_by(self, *order_by: OrderBy[TC]) -> 'SelectQuery[TC]':
-        return SelectQuery(self.table1, self._selection, list(order_by), self._group_by)
-
-    def order_by_more(self, column: Prop[TC, Any] | PropOpt[TC, Any], direction: Direction = Direction.ASC) -> 'SelectQuery[TC]':
-        return SelectQuery(self.table1, self._selection, [*self._order_by, OrderBy(column, direction)], self._group_by)
-
-    def group_by(self, *group_by: PropSelect[TC, Any]) -> 'SelectQuery[TC]':
-        return SelectQuery(self.table1, self._selection, self._order_by, list(group_by))
-
-    def group_by_more(self, col: PropSelect[TC, Any], *cols: PropSelect[TC, Any]) -> 'SelectQuery[TC]':
-        return SelectQuery(self.table1, self._selection, self._order_by, [*self._group_by, col, *cols])
-
-    def join_inner(self, next: Type[TC1], on: Constraint2[TC, TC1] | None = None) -> 'JoinQuery2[TC, TC1]':
-        return JoinQuery2(self.table1, next, JoinType.Inner, on, self._selection, self._order_by, self._group_by)
-
-    def join_left(self, next: Type[TC1], on: Constraint2[TC, TC1] | None = None) -> 'JoinQuery2[TC, TC1]':
-        return JoinQuery2(self.table1, next, JoinType.Left, on, self._selection, self._order_by, self._group_by)
-
-    def where(self, constraint: Constraint[TC] | None = None) -> 'Query1[TC]':
-        return Query1(self.table1, _resolve_selection(self._selection, self.table1), constraint, self._order_by, self._group_by)
-
-@dataclass(frozen=True)
-class SelectQueryComputed(Generic[TC]):
-    table1: Type[TC]
-    _selection: Sequence[PropSelect[TC, Any]] | None
-    _order_by: Sequence[OrderBy[TC]]
-    _group_by: Sequence[PropSelect[TC, Any]]
-    _computed: Sequence[Computed[TC, Any]]
-    _having: HavingConstraint[TC] | None = None
-
-    def select(self, sel: PropSelect[TC, Any], *sels: PropSelect[TC, Any]) -> 'SelectQueryComputed[TC]':
-        return SelectQueryComputed(self.table1, [sel, *sels], self._order_by, self._group_by, self._computed, self._having)
-
-    def select_more(self, sel: PropSelect[TC, Any], *sels: PropSelect[TC, Any]) -> 'SelectQueryComputed[TC]':
-        return SelectQueryComputed(self.table1, [*(self._selection or []), sel, *sels], self._order_by, self._group_by, self._computed, self._having)
-
-    def select_computed(self, computed: Computed[TC, Any], *more: Computed[TC, Any]) -> 'SelectQueryComputed[TC]':
-        return SelectQueryComputed(self.table1, self._selection, self._order_by, self._group_by, [computed, *more], self._having)
-
-    def select_computed_more(self, computed: Computed[TC, Any], *more: Computed[TC, Any]) -> 'SelectQueryComputed[TC]':
-        return SelectQueryComputed(self.table1, self._selection, self._order_by, self._group_by, [*self._computed, computed, *more], self._having)
-
-    def order_by(self, *order_by: OrderBy[TC]) -> 'SelectQueryComputed[TC]':
-        return SelectQueryComputed(self.table1, self._selection, list(order_by), self._group_by, self._computed, self._having)
-
-    def order_by_more(self, column: Prop[TC, Any] | PropOpt[TC, Any], direction: Direction = Direction.ASC) -> 'SelectQueryComputed[TC]':
-        return SelectQueryComputed(self.table1, self._selection, [*self._order_by, OrderBy(column, direction)], self._group_by, self._computed, self._having)
-
-    def group_by(self, *group_by: PropSelect[TC, Any]) -> 'SelectQueryComputed[TC]':
-        return SelectQueryComputed(self.table1, self._selection, self._order_by, list(group_by), self._computed, self._having)
-
-    def group_by_more(self, col: PropSelect[TC, Any], *cols: PropSelect[TC, Any]) -> 'SelectQueryComputed[TC]':
-        return SelectQueryComputed(self.table1, self._selection, self._order_by, [*self._group_by, col, *cols], self._computed, self._having)
-
-    def having(self, constraint: HavingConstraint[TC] | None = None) -> 'SelectQueryComputed[TC]':
-        return SelectQueryComputed(self.table1, self._selection, self._order_by, self._group_by, self._computed, constraint)
-
-    def having_and(self, constraint: HavingConstraint[TC]) -> 'SelectQueryComputed[TC]':
-        return self.having(constraint if self._having is None else self._having.AND(constraint))
-
-    def having_or(self, constraint: HavingConstraint[TC]) -> 'SelectQueryComputed[TC]':
-        return self.having(constraint if self._having is None else self._having.OR(constraint))
-
-    def join_inner(self, next: Type[TC1], on: Constraint2[TC, TC1] | None = None) -> 'JoinQuery2Computed[TC, TC1]':
-        # Unlike order_by/group_by/computed, a HavingConstraint doesn't carry across a join: each
-        # arity's HavingConstraintN is a distinct, unrelated class (not a shared class widened via
-        # union, the way OrderBy is), so an already-set _having can't be safely re-typed for a wider
-        # arity, and AND/OR-composing it with a wider-arity constraint later wouldn't type-check
-        # either. Set having() after your last join instead.
-        assert self._having is None, 'Cannot join after having() has been set -- call join_inner/join_left before having()'
-        return JoinQuery2Computed(self.table1, next, JoinType.Inner, on, self._selection, self._order_by, self._group_by, self._computed)
-
-    def join_left(self, next: Type[TC1], on: Constraint2[TC, TC1] | None = None) -> 'JoinQuery2Computed[TC, TC1]':
-        assert self._having is None, 'Cannot join after having() has been set -- call join_inner/join_left before having()'
-        return JoinQuery2Computed(self.table1, next, JoinType.Left, on, self._selection, self._order_by, self._group_by, self._computed)
-
-    def where(self, constraint: Constraint[TC] | None = None) -> 'ComputedQuery1[TC]':
-        # Unlike the plain builders, an unset selection here defaults to *no* plain columns rather
-        # than every column -- SELECT * alongside an aggregate is almost never valid SQL (every
-        # unaggregated column would need to be in GROUP BY), so defaulting to "just the computed
-        # columns" is far more often what's actually wanted.
-        return ComputedQuery1(self.table1, list(self._selection or []), constraint, self._order_by, self._group_by, self._computed, self._having)
+# --- 1-4 tables: QueryN/ComputedQueryN ---
+# There used to be a separate "builder" class per arity (SelectQuery/JoinQueryN) that had no
+# to_sql()/to_sql_params() of its own -- calling where() was the one-time transition into a "terminal"
+# class (QueryN) that did. That split existed because a WHERE/HAVING constraint set before a later
+# join_inner()/join_left() couldn't be safely re-typed for the wider arity: ConstraintN/
+# HavingConstraintN are distinct, unrelated classes per arity, not one class widened via a union the
+# way OrderBy/Computed are.
+#
+# Constraint.incr_arity()/HavingConstraint.incr_arity() (see sql_constraint.py/sql_having.py) remove
+# that obstacle -- a constraint set at arity N can now be safely rewrapped into the arity-(N+1) class,
+# with the exact same operands, whenever a join widens the query. So where()/having() no longer need
+# to be a special one-time transition: join_inner()/join_left() just carries _where/_having across by
+# calling incr_arity() on them when set, and QueryN/ComputedQueryN are directly executable
+# (to_sql()/to_sql_params()) at every stage, builder and "terminal" alike -- hence one class per arity
+# instead of two. select_computed(_more) still splits off into a separate ComputedQueryN from QueryN,
+# since the result type R differs (PartialModel[...] vs Tuple[..., ComputedResult]) and R can't vary
+# at runtime for a single dataclass.
+#
+# _order_by/_group_by/_computed still widen by one union member per table added (rather than gaining
+# an arity variant the way Constraint/HavingConstraint do), since none of OrderBy/Computed/a plain
+# group-by column ever references more than one table at a time -- an entry set before a join stays
+# exactly as valid after it, with no re-wrapping needed.
 
 @dataclass(frozen=True)
 class Query1(Generic[TC], SqlQuery[PartialModel[TC]]):
     table1: Type[TC]
-    _selection: Sequence[PropSelect[TC, Any]]
+    _selection: Sequence[PropSelect[TC, Any]] | None = None
     _where: Constraint[TC] | None = None
     _order_by: Sequence[OrderBy[TC]] = ()
     _group_by: Sequence[PropSelect[TC, Any]] = ()
@@ -251,16 +166,13 @@ class Query1(Generic[TC], SqlQuery[PartialModel[TC]]):
         return Query1(self.table1, [sel, *sels], self._where, self._order_by, self._group_by)
 
     def select_more(self, sel: PropSelect[TC, Any], *sels: PropSelect[TC, Any]) -> 'Query1[TC]':
-        return Query1(self.table1, [*self._selection, sel, *sels], self._where, self._order_by, self._group_by)
+        return Query1(self.table1, [*(self._selection or []), sel, *sels], self._where, self._order_by, self._group_by)
 
     def select_computed(self, computed: Computed[TC, Any], *more: Computed[TC, Any]) -> 'ComputedQuery1[TC]':
         return ComputedQuery1(self.table1, self._selection, self._where, self._order_by, self._group_by, [computed, *more])
 
     def select_computed_more(self, computed: Computed[TC, Any], *more: Computed[TC, Any]) -> 'ComputedQuery1[TC]':
         return ComputedQuery1(self.table1, self._selection, self._where, self._order_by, self._group_by, [computed, *more])
-
-    def where(self, constraint: Constraint[TC] | None = None) -> 'Query1[TC]':
-        return Query1(self.table1, self._selection, constraint, self._order_by, self._group_by)
 
     def order_by(self, *order_by: OrderBy[TC]) -> 'Query1[TC]':
         return Query1(self.table1, self._selection, self._where, list(order_by), self._group_by)
@@ -274,17 +186,37 @@ class Query1(Generic[TC], SqlQuery[PartialModel[TC]]):
     def group_by_more(self, col: PropSelect[TC, Any], *cols: PropSelect[TC, Any]) -> 'Query1[TC]':
         return Query1(self.table1, self._selection, self._where, self._order_by, [*self._group_by, col, *cols])
 
+    def join_inner(self, next: Type[TC1], on: Constraint2[TC, TC1] | None = None) -> 'Query2[TC, TC1]':
+        return Query2(self.table1, next, JoinType.Inner, on, self._selection, None if self._where is None else self._where.incr_arity(), self._order_by, self._group_by)
+
+    def join_left(self, next: Type[TC1], on: Constraint2[TC, TC1] | None = None) -> 'Query2[TC, TC1]':
+        return Query2(self.table1, next, JoinType.Left, on, self._selection, None if self._where is None else self._where.incr_arity(), self._order_by, self._group_by)
+
+    def where(self, constraint: Constraint[TC] | None = None) -> 'Query1[TC]':
+        return Query1(self.table1, self._selection, constraint, self._order_by, self._group_by)
+
+    def where_and(self, constraint: Constraint[TC]) -> 'Query1[TC]':
+        return self.where(constraint if self._where is None else self._where.AND(constraint))
+
+    def where_or(self, constraint: Constraint[TC]) -> 'Query1[TC]':
+        return self.where(constraint if self._where is None else self._where.OR(constraint))
+
+    def _resolved_selection(self) -> List[PropSelect[Any, Any]]:
+        return _resolve_selection(self._selection, self.table1)
+
     def to_sql(self) -> str:
-        assert len(self._selection) > 0, 'You must select at least one column'
-        selections = ', '.join(p.label for p in self._selection)
+        selection = self._resolved_selection()
+        assert len(selection) > 0, 'You must select at least one column'
+        selections = ', '.join(p.label for p in selection)
         where_clause = '' if self._where is None else (' WHERE ' + self._where.to_sql())
         group_by_clause = _group_by_sql(self._group_by, qualify=False)
         order_by_clause = _order_by_sql(self._order_by, qualify=False)
         return f'SELECT {selections} FROM {self.table1.__name__.lower()}{where_clause}{group_by_clause}{order_by_clause};'
 
     def to_sql_params(self) -> Tuple[str, List[Any]]:
-        assert len(self._selection) > 0, 'You must select at least one column'
-        selections = ', '.join(p.label for p in self._selection)
+        selection = self._resolved_selection()
+        assert len(selection) > 0, 'You must select at least one column'
+        selections = ', '.join(p.label for p in selection)
         group_by_clause = _group_by_sql(self._group_by, qualify=False)
         order_by_clause = _order_by_sql(self._order_by, qualify=False)
         if self._where is None:
@@ -295,27 +227,24 @@ class Query1(Generic[TC], SqlQuery[PartialModel[TC]]):
 @dataclass(frozen=True)
 class ComputedQuery1(Generic[TC], SqlQuery[Tuple[PartialModel[TC], ComputedResult]]):
     table1: Type[TC]
-    _selection: Sequence[PropSelect[TC, Any]]
-    _where: Constraint[TC] | None
-    _order_by: Sequence[OrderBy[TC]]
-    _group_by: Sequence[PropSelect[TC, Any]]
-    _computed: Sequence[Computed[TC, Any]]
+    _selection: Sequence[PropSelect[TC, Any]] | None = None
+    _where: Constraint[TC] | None = None
+    _order_by: Sequence[OrderBy[TC]] = ()
+    _group_by: Sequence[PropSelect[TC, Any]] = ()
+    _computed: Sequence[Computed[TC, Any]] = ()
     _having: HavingConstraint[TC] | None = None
 
     def select(self, sel: PropSelect[TC, Any], *sels: PropSelect[TC, Any]) -> 'ComputedQuery1[TC]':
         return ComputedQuery1(self.table1, [sel, *sels], self._where, self._order_by, self._group_by, self._computed, self._having)
 
     def select_more(self, sel: PropSelect[TC, Any], *sels: PropSelect[TC, Any]) -> 'ComputedQuery1[TC]':
-        return ComputedQuery1(self.table1, [*self._selection, sel, *sels], self._where, self._order_by, self._group_by, self._computed, self._having)
+        return ComputedQuery1(self.table1, [*(self._selection or []), sel, *sels], self._where, self._order_by, self._group_by, self._computed, self._having)
 
     def select_computed(self, computed: Computed[TC, Any], *more: Computed[TC, Any]) -> 'ComputedQuery1[TC]':
         return ComputedQuery1(self.table1, self._selection, self._where, self._order_by, self._group_by, [computed, *more], self._having)
 
     def select_computed_more(self, computed: Computed[TC, Any], *more: Computed[TC, Any]) -> 'ComputedQuery1[TC]':
         return ComputedQuery1(self.table1, self._selection, self._where, self._order_by, self._group_by, [*self._computed, computed, *more], self._having)
-
-    def where(self, constraint: Constraint[TC] | None = None) -> 'ComputedQuery1[TC]':
-        return ComputedQuery1(self.table1, self._selection, constraint, self._order_by, self._group_by, self._computed, self._having)
 
     def order_by(self, *order_by: OrderBy[TC]) -> 'ComputedQuery1[TC]':
         return ComputedQuery1(self.table1, self._selection, self._where, list(order_by), self._group_by, self._computed, self._having)
@@ -338,9 +267,42 @@ class ComputedQuery1(Generic[TC], SqlQuery[Tuple[PartialModel[TC], ComputedResul
     def having_or(self, constraint: HavingConstraint[TC]) -> 'ComputedQuery1[TC]':
         return self.having(constraint if self._having is None else self._having.OR(constraint))
 
+    def where(self, constraint: Constraint[TC] | None = None) -> 'ComputedQuery1[TC]':
+        return ComputedQuery1(self.table1, self._selection, constraint, self._order_by, self._group_by, self._computed, self._having)
+
+    def where_and(self, constraint: Constraint[TC]) -> 'ComputedQuery1[TC]':
+        return self.where(constraint if self._where is None else self._where.AND(constraint))
+
+    def where_or(self, constraint: Constraint[TC]) -> 'ComputedQuery1[TC]':
+        return self.where(constraint if self._where is None else self._where.OR(constraint))
+
+    def join_inner(self, next: Type[TC1], on: Constraint2[TC, TC1] | None = None) -> 'ComputedQuery2[TC, TC1]':
+        return ComputedQuery2(
+            self.table1, next, JoinType.Inner, on,
+            self._selection, None if self._where is None else self._where.incr_arity(),
+            self._order_by, self._group_by, self._computed,
+            None if self._having is None else self._having.incr_arity(),
+        )
+
+    def join_left(self, next: Type[TC1], on: Constraint2[TC, TC1] | None = None) -> 'ComputedQuery2[TC, TC1]':
+        return ComputedQuery2(
+            self.table1, next, JoinType.Left, on,
+            self._selection, None if self._where is None else self._where.incr_arity(),
+            self._order_by, self._group_by, self._computed,
+            None if self._having is None else self._having.incr_arity(),
+        )
+
+    def _resolved_selection(self) -> List[PropSelect[Any, Any]]:
+        # Unlike the plain QueryN, an unset selection here defaults to *no* plain columns rather than
+        # every column -- SELECT * alongside an aggregate is almost never valid SQL (every
+        # unaggregated column would need to be in GROUP BY), so defaulting to "just the computed
+        # columns" is far more often what's actually wanted.
+        return list(self._selection or [])
+
     def to_sql(self) -> str:
-        assert len(self._selection) > 0 or len(self._computed) > 0, 'You must select at least one column or computed value'
-        selections = ', '.join([*(p.label for p in self._selection), *_computed_sql_parts(self._computed, qualify=False)])
+        selection = self._resolved_selection()
+        assert len(selection) > 0 or len(self._computed) > 0, 'You must select at least one column or computed value'
+        selections = ', '.join([*(p.label for p in selection), *_computed_sql_parts(self._computed, qualify=False)])
         where_clause = '' if self._where is None else (' WHERE ' + self._where.to_sql())
         group_by_clause = _group_by_sql(self._group_by, qualify=False)
         having_clause = '' if self._having is None else (' HAVING ' + self._having.to_sql())
@@ -348,8 +310,9 @@ class ComputedQuery1(Generic[TC], SqlQuery[Tuple[PartialModel[TC], ComputedResul
         return f'SELECT {selections} FROM {self.table1.__name__.lower()}{where_clause}{group_by_clause}{having_clause}{order_by_clause};'
 
     def to_sql_params(self) -> Tuple[str, List[Any]]:
-        assert len(self._selection) > 0 or len(self._computed) > 0, 'You must select at least one column or computed value'
-        selections = ', '.join([*(p.label for p in self._selection), *_computed_sql_parts(self._computed, qualify=False)])
+        selection = self._resolved_selection()
+        assert len(selection) > 0 or len(self._computed) > 0, 'You must select at least one column or computed value'
+        selections = ', '.join([*(p.label for p in selection), *_computed_sql_parts(self._computed, qualify=False)])
         group_by_clause = _group_by_sql(self._group_by, qualify=False)
         order_by_clause = _order_by_sql(self._order_by, qualify=False)
         params: List[Any] = []
@@ -494,118 +457,7 @@ class DeleteQuery(Generic[TC], SqlQuery[None]):
         return f'DELETE FROM {self._model.__name__.lower()} WHERE {where_clause};', params
 
 
-# --- 2-4 tables: JoinQueryN/JoinQueryNComputed (builders) -> QueryN/ComputedQueryN (terminals) ---
-# Each join step keeps its own JoinType and on-constraints (of the arity active when that table was
-# added), since a chained join can mix LEFT/INNER per step and later ON clauses may reference any
-# previously joined table. Joining stops at 4 tables; beyond that, compose queries by hand.
-#
-# _order_by/_group_by/_computed all widen by one union member per table added (rather than gaining an
-# arity variant the way Constraint does), since none of OrderBy/Computed/a plain group-by column ever
-# references more than one table at a time -- an entry set before a join stays exactly as valid after
-# it, with no re-wrapping needed.
-
-@dataclass(frozen=True)
-class JoinQuery2(Generic[TC, TC1]):
-    table1: Type[TC]
-    table2: Type[TC1]
-    join_type_2: JoinType
-    on_2: Constraint2[TC, TC1] | None
-    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any]] | None = None
-    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1]] = ()
-    _group_by: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any]] = ()
-
-    def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'JoinQuery2[TC, TC1]':
-        return JoinQuery2(self.table1, self.table2, self.join_type_2, self.on_2, [sel, *sels], self._order_by, self._group_by)
-
-    def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'JoinQuery2[TC, TC1]':
-        return JoinQuery2(self.table1, self.table2, self.join_type_2, self.on_2, [*(self._selection or []), sel, *sels], self._order_by, self._group_by)
-
-    def select_computed(self, computed: Computed[TC, Any] | Computed[TC1, Any], *more: Computed[TC, Any] | Computed[TC1, Any]) -> 'JoinQuery2Computed[TC, TC1]':
-        return JoinQuery2Computed(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._order_by, self._group_by, [computed, *more])
-
-    def select_computed_more(self, computed: Computed[TC, Any] | Computed[TC1, Any], *more: Computed[TC, Any] | Computed[TC1, Any]) -> 'JoinQuery2Computed[TC, TC1]':
-        return JoinQuery2Computed(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._order_by, self._group_by, [computed, *more])
-
-    def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1]) -> 'JoinQuery2[TC, TC1]':
-        return JoinQuery2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, list(order_by), self._group_by)
-
-    def order_by_more(self, column: Prop[TC, Any] | PropOpt[TC, Any] | Prop[TC1, Any] | PropOpt[TC1, Any], direction: Direction = Direction.ASC) -> 'JoinQuery2[TC, TC1]':
-        new_entry: OrderBy[TC] | OrderBy[TC1] = OrderBy(column, direction) # type: ignore[assignment]
-        return JoinQuery2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, [*self._order_by, new_entry], self._group_by)
-
-    def group_by(self, *group_by: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'JoinQuery2[TC, TC1]':
-        return JoinQuery2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._order_by, list(group_by))
-
-    def group_by_more(self, col: PropSelect[TC, Any] | PropSelect[TC1, Any], *cols: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'JoinQuery2[TC, TC1]':
-        return JoinQuery2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._order_by, [*self._group_by, col, *cols])
-
-    def join_inner(self, next: Type[TC2], on: Constraint3[TC, TC1, TC2] | None = None) -> 'JoinQuery3[TC, TC1, TC2]':
-        return JoinQuery3(self.table1, self.table2, next, self.join_type_2, self.on_2, JoinType.Inner, on, self._selection, self._order_by, self._group_by)
-
-    def join_left(self, next: Type[TC2], on: Constraint3[TC, TC1, TC2] | None = None) -> 'JoinQuery3[TC, TC1, TC2]':
-        return JoinQuery3(self.table1, self.table2, next, self.join_type_2, self.on_2, JoinType.Left, on, self._selection, self._order_by, self._group_by)
-
-    def where(self, constraint: Constraint2[TC, TC1] | None = None) -> 'Query2[TC, TC1]':
-        return Query2(self.table1, self.table2, self.join_type_2, self.on_2, _resolve_selection(self._selection, self.table1, self.table2), constraint, self._order_by, self._group_by)
-
-@dataclass(frozen=True)
-class JoinQuery2Computed(Generic[TC, TC1]):
-    table1: Type[TC]
-    table2: Type[TC1]
-    join_type_2: JoinType
-    on_2: Constraint2[TC, TC1] | None
-    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any]] | None
-    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1]]
-    _group_by: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any]]
-    _computed: Sequence[Computed[TC, Any] | Computed[TC1, Any]]
-    _having: HavingConstraint2[TC, TC1] | None = None
-
-    def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'JoinQuery2Computed[TC, TC1]':
-        return JoinQuery2Computed(self.table1, self.table2, self.join_type_2, self.on_2, [sel, *sels], self._order_by, self._group_by, self._computed, self._having)
-
-    def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'JoinQuery2Computed[TC, TC1]':
-        return JoinQuery2Computed(self.table1, self.table2, self.join_type_2, self.on_2, [*(self._selection or []), sel, *sels], self._order_by, self._group_by, self._computed, self._having)
-
-    def select_computed(self, computed: Computed[TC, Any] | Computed[TC1, Any], *more: Computed[TC, Any] | Computed[TC1, Any]) -> 'JoinQuery2Computed[TC, TC1]':
-        return JoinQuery2Computed(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._order_by, self._group_by, [computed, *more], self._having)
-
-    def select_computed_more(self, computed: Computed[TC, Any] | Computed[TC1, Any], *more: Computed[TC, Any] | Computed[TC1, Any]) -> 'JoinQuery2Computed[TC, TC1]':
-        return JoinQuery2Computed(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._order_by, self._group_by, [*self._computed, computed, *more], self._having)
-
-    def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1]) -> 'JoinQuery2Computed[TC, TC1]':
-        return JoinQuery2Computed(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, list(order_by), self._group_by, self._computed, self._having)
-
-    def order_by_more(self, column: Prop[TC, Any] | PropOpt[TC, Any] | Prop[TC1, Any] | PropOpt[TC1, Any], direction: Direction = Direction.ASC) -> 'JoinQuery2Computed[TC, TC1]':
-        new_entry: OrderBy[TC] | OrderBy[TC1] = OrderBy(column, direction) # type: ignore[assignment]
-        return JoinQuery2Computed(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, [*self._order_by, new_entry], self._group_by, self._computed, self._having)
-
-    def group_by(self, *group_by: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'JoinQuery2Computed[TC, TC1]':
-        return JoinQuery2Computed(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._order_by, list(group_by), self._computed, self._having)
-
-    def group_by_more(self, col: PropSelect[TC, Any] | PropSelect[TC1, Any], *cols: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'JoinQuery2Computed[TC, TC1]':
-        return JoinQuery2Computed(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._order_by, [*self._group_by, col, *cols], self._computed, self._having)
-
-    def having(self, constraint: HavingConstraint2[TC, TC1] | None = None) -> 'JoinQuery2Computed[TC, TC1]':
-        return JoinQuery2Computed(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._order_by, self._group_by, self._computed, constraint)
-
-    def having_and(self, constraint: HavingConstraint2[TC, TC1]) -> 'JoinQuery2Computed[TC, TC1]':
-        return self.having(constraint if self._having is None else self._having.AND(constraint))
-
-    def having_or(self, constraint: HavingConstraint2[TC, TC1]) -> 'JoinQuery2Computed[TC, TC1]':
-        return self.having(constraint if self._having is None else self._having.OR(constraint))
-
-    def join_inner(self, next: Type[TC2], on: Constraint3[TC, TC1, TC2] | None = None) -> 'JoinQuery3Computed[TC, TC1, TC2]':
-        # See JoinQuery2Computed.join_inner(): a HavingConstraintN can't carry across a join.
-        assert self._having is None, 'Cannot join after having() has been set -- call join_inner/join_left before having()'
-        return JoinQuery3Computed(self.table1, self.table2, next, self.join_type_2, self.on_2, JoinType.Inner, on, self._selection, self._order_by, self._group_by, self._computed)
-
-    def join_left(self, next: Type[TC2], on: Constraint3[TC, TC1, TC2] | None = None) -> 'JoinQuery3Computed[TC, TC1, TC2]':
-        assert self._having is None, 'Cannot join after having() has been set -- call join_inner/join_left before having()'
-        return JoinQuery3Computed(self.table1, self.table2, next, self.join_type_2, self.on_2, JoinType.Left, on, self._selection, self._order_by, self._group_by, self._computed)
-
-    def where(self, constraint: Constraint2[TC, TC1] | None = None) -> 'ComputedQuery2[TC, TC1]':
-        # See SelectQueryComputed.where(): default to no plain columns, not every column.
-        return ComputedQuery2(self.table1, self.table2, self.join_type_2, self.on_2, list(self._selection or []), constraint, self._order_by, self._group_by, self._computed, self._having)
+# --- 2 tables ---
 
 @dataclass(frozen=True)
 class Query2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1]]]):
@@ -613,7 +465,7 @@ class Query2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1
     table2: Type[TC1]
     join_type_2: JoinType
     on_2: Constraint2[TC, TC1] | None
-    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any]]
+    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any]] | None = None
     _where: Constraint2[TC, TC1] | None = None
     _order_by: Sequence[OrderBy[TC] | OrderBy[TC1]] = ()
     _group_by: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any]] = ()
@@ -622,16 +474,13 @@ class Query2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1
         return Query2(self.table1, self.table2, self.join_type_2, self.on_2, [sel, *sels], self._where, self._order_by, self._group_by)
 
     def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'Query2[TC, TC1]':
-        return Query2(self.table1, self.table2, self.join_type_2, self.on_2, [*self._selection, sel, *sels], self._where, self._order_by, self._group_by)
+        return Query2(self.table1, self.table2, self.join_type_2, self.on_2, [*(self._selection or []), sel, *sels], self._where, self._order_by, self._group_by)
 
     def select_computed(self, computed: Computed[TC, Any] | Computed[TC1, Any], *more: Computed[TC, Any] | Computed[TC1, Any]) -> 'ComputedQuery2[TC, TC1]':
         return ComputedQuery2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._where, self._order_by, self._group_by, [computed, *more])
 
     def select_computed_more(self, computed: Computed[TC, Any] | Computed[TC1, Any], *more: Computed[TC, Any] | Computed[TC1, Any]) -> 'ComputedQuery2[TC, TC1]':
         return ComputedQuery2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._where, self._order_by, self._group_by, [computed, *more])
-
-    def where(self, constraint: Constraint2[TC, TC1] | None = None) -> 'Query2[TC, TC1]':
-        return Query2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, constraint, self._order_by, self._group_by)
 
     def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1]) -> 'Query2[TC, TC1]':
         return Query2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._where, list(order_by), self._group_by)
@@ -646,11 +495,38 @@ class Query2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1
     def group_by_more(self, col: PropSelect[TC, Any] | PropSelect[TC1, Any], *cols: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'Query2[TC, TC1]':
         return Query2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._where, self._order_by, [*self._group_by, col, *cols])
 
+    def join_inner(self, next: Type[TC2], on: Constraint3[TC, TC1, TC2] | None = None) -> 'Query3[TC, TC1, TC2]':
+        return Query3(
+            self.table1, self.table2, next, self.join_type_2, self.on_2, JoinType.Inner, on,
+            self._selection, None if self._where is None else self._where.incr_arity(),
+            self._order_by, self._group_by,
+        )
+
+    def join_left(self, next: Type[TC2], on: Constraint3[TC, TC1, TC2] | None = None) -> 'Query3[TC, TC1, TC2]':
+        return Query3(
+            self.table1, self.table2, next, self.join_type_2, self.on_2, JoinType.Left, on,
+            self._selection, None if self._where is None else self._where.incr_arity(),
+            self._order_by, self._group_by,
+        )
+
+    def where(self, constraint: Constraint2[TC, TC1] | None = None) -> 'Query2[TC, TC1]':
+        return Query2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, constraint, self._order_by, self._group_by)
+
+    def where_and(self, constraint: Constraint2[TC, TC1]) -> 'Query2[TC, TC1]':
+        return self.where(constraint if self._where is None else self._where.AND(constraint))
+
+    def where_or(self, constraint: Constraint2[TC, TC1]) -> 'Query2[TC, TC1]':
+        return self.where(constraint if self._where is None else self._where.OR(constraint))
+
+    def _resolved_selection(self) -> List[PropSelect[Any, Any]]:
+        return _resolve_selection(self._selection, self.table1, self.table2)
+
     def to_sql(self) -> str:
-        assert len(self._selection) > 0, 'You must select at least one column'
+        selection = self._resolved_selection()
+        assert len(selection) > 0, 'You must select at least one column'
         assert self.on_2 is not None, 'You must specify a join condition for join 2'
 
-        selections = ', '.join(_qualified_label(p) for p in self._selection)
+        selections = ', '.join(_qualified_label(p) for p in selection)
         where_clause = '' if self._where is None else ' WHERE ' + self._where.to_sql()
         group_by_clause = _group_by_sql(self._group_by, qualify=True)
         order_by_clause = _order_by_sql(self._order_by, qualify=True)
@@ -662,10 +538,11 @@ class Query2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1
         return f'SELECT {selections} FROM {from_clause}{where_clause}{group_by_clause}{order_by_clause};'
 
     def to_sql_params(self) -> Tuple[str, List[Any]]:
-        assert len(self._selection) > 0, 'You must select at least one column'
+        selection = self._resolved_selection()
+        assert len(selection) > 0, 'You must select at least one column'
         assert self.on_2 is not None, 'You must specify a join condition for join 2'
 
-        selections = ', '.join(_qualified_label(p) for p in self._selection)
+        selections = ', '.join(_qualified_label(p) for p in selection)
         group_by_clause = _group_by_sql(self._group_by, qualify=True)
         order_by_clause = _order_by_sql(self._order_by, qualify=True)
         params: List[Any] = []
@@ -686,27 +563,24 @@ class ComputedQuery2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialM
     table2: Type[TC1]
     join_type_2: JoinType
     on_2: Constraint2[TC, TC1] | None
-    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any]]
-    _where: Constraint2[TC, TC1] | None
-    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1]]
-    _group_by: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any]]
-    _computed: Sequence[Computed[TC, Any] | Computed[TC1, Any]]
+    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any]] | None = None
+    _where: Constraint2[TC, TC1] | None = None
+    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1]] = ()
+    _group_by: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any]] = ()
+    _computed: Sequence[Computed[TC, Any] | Computed[TC1, Any]] = ()
     _having: HavingConstraint2[TC, TC1] | None = None
 
     def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'ComputedQuery2[TC, TC1]':
         return ComputedQuery2(self.table1, self.table2, self.join_type_2, self.on_2, [sel, *sels], self._where, self._order_by, self._group_by, self._computed, self._having)
 
     def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'ComputedQuery2[TC, TC1]':
-        return ComputedQuery2(self.table1, self.table2, self.join_type_2, self.on_2, [*self._selection, sel, *sels], self._where, self._order_by, self._group_by, self._computed, self._having)
+        return ComputedQuery2(self.table1, self.table2, self.join_type_2, self.on_2, [*(self._selection or []), sel, *sels], self._where, self._order_by, self._group_by, self._computed, self._having)
 
     def select_computed(self, computed: Computed[TC, Any] | Computed[TC1, Any], *more: Computed[TC, Any] | Computed[TC1, Any]) -> 'ComputedQuery2[TC, TC1]':
         return ComputedQuery2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._where, self._order_by, self._group_by, [computed, *more], self._having)
 
     def select_computed_more(self, computed: Computed[TC, Any] | Computed[TC1, Any], *more: Computed[TC, Any] | Computed[TC1, Any]) -> 'ComputedQuery2[TC, TC1]':
         return ComputedQuery2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._where, self._order_by, self._group_by, [*self._computed, computed, *more], self._having)
-
-    def where(self, constraint: Constraint2[TC, TC1] | None = None) -> 'ComputedQuery2[TC, TC1]':
-        return ComputedQuery2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, constraint, self._order_by, self._group_by, self._computed, self._having)
 
     def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1]) -> 'ComputedQuery2[TC, TC1]':
         return ComputedQuery2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, self._where, list(order_by), self._group_by, self._computed, self._having)
@@ -730,11 +604,40 @@ class ComputedQuery2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialM
     def having_or(self, constraint: HavingConstraint2[TC, TC1]) -> 'ComputedQuery2[TC, TC1]':
         return self.having(constraint if self._having is None else self._having.OR(constraint))
 
+    def where(self, constraint: Constraint2[TC, TC1] | None = None) -> 'ComputedQuery2[TC, TC1]':
+        return ComputedQuery2(self.table1, self.table2, self.join_type_2, self.on_2, self._selection, constraint, self._order_by, self._group_by, self._computed, self._having)
+
+    def where_and(self, constraint: Constraint2[TC, TC1]) -> 'ComputedQuery2[TC, TC1]':
+        return self.where(constraint if self._where is None else self._where.AND(constraint))
+
+    def where_or(self, constraint: Constraint2[TC, TC1]) -> 'ComputedQuery2[TC, TC1]':
+        return self.where(constraint if self._where is None else self._where.OR(constraint))
+
+    def join_inner(self, next: Type[TC2], on: Constraint3[TC, TC1, TC2] | None = None) -> 'ComputedQuery3[TC, TC1, TC2]':
+        return ComputedQuery3(
+            self.table1, self.table2, next, self.join_type_2, self.on_2, JoinType.Inner, on,
+            self._selection, None if self._where is None else self._where.incr_arity(),
+            self._order_by, self._group_by, self._computed,
+            None if self._having is None else self._having.incr_arity(),
+        )
+
+    def join_left(self, next: Type[TC2], on: Constraint3[TC, TC1, TC2] | None = None) -> 'ComputedQuery3[TC, TC1, TC2]':
+        return ComputedQuery3(
+            self.table1, self.table2, next, self.join_type_2, self.on_2, JoinType.Left, on,
+            self._selection, None if self._where is None else self._where.incr_arity(),
+            self._order_by, self._group_by, self._computed,
+            None if self._having is None else self._having.incr_arity(),
+        )
+
+    def _resolved_selection(self) -> List[PropSelect[Any, Any]]:
+        return list(self._selection or [])
+
     def to_sql(self) -> str:
-        assert len(self._selection) > 0 or len(self._computed) > 0, 'You must select at least one column or computed value'
+        selection = self._resolved_selection()
+        assert len(selection) > 0 or len(self._computed) > 0, 'You must select at least one column or computed value'
         assert self.on_2 is not None, 'You must specify a join condition for join 2'
 
-        selections = ', '.join([*(_qualified_label(p) for p in self._selection), *_computed_sql_parts(self._computed, qualify=True)])
+        selections = ', '.join([*(_qualified_label(p) for p in selection), *_computed_sql_parts(self._computed, qualify=True)])
         where_clause = '' if self._where is None else ' WHERE ' + self._where.to_sql()
         group_by_clause = _group_by_sql(self._group_by, qualify=True)
         having_clause = '' if self._having is None else ' HAVING ' + self._having.to_sql()
@@ -747,10 +650,11 @@ class ComputedQuery2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialM
         return f'SELECT {selections} FROM {from_clause}{where_clause}{group_by_clause}{having_clause}{order_by_clause};'
 
     def to_sql_params(self) -> Tuple[str, List[Any]]:
-        assert len(self._selection) > 0 or len(self._computed) > 0, 'You must select at least one column or computed value'
+        selection = self._resolved_selection()
+        assert len(selection) > 0 or len(self._computed) > 0, 'You must select at least one column or computed value'
         assert self.on_2 is not None, 'You must specify a join condition for join 2'
 
-        selections = ', '.join([*(_qualified_label(p) for p in self._selection), *_computed_sql_parts(self._computed, qualify=True)])
+        selections = ', '.join([*(_qualified_label(p) for p in selection), *_computed_sql_parts(self._computed, qualify=True)])
         group_by_clause = _group_by_sql(self._group_by, qualify=True)
         order_by_clause = _order_by_sql(self._order_by, qualify=True)
         params: List[Any] = []
@@ -771,114 +675,8 @@ class ComputedQuery2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialM
             params += having_params
         return f'SELECT {selections} FROM {from_clause}{where_clause}{group_by_clause}{having_clause}{order_by_clause};', params
 
-@dataclass(frozen=True)
-class JoinQuery3(Generic[TC, TC1, TC2]):
-    table1: Type[TC]
-    table2: Type[TC1]
-    table3: Type[TC2]
-    join_type_2: JoinType
-    on_2: Constraint2[TC, TC1] | None
-    join_type_3: JoinType
-    on_3: Constraint3[TC, TC1, TC2] | None
-    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]] | None = None
-    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2]] = ()
-    _group_by: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]] = ()
 
-    def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'JoinQuery3[TC, TC1, TC2]':
-        return JoinQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [sel, *sels], self._order_by, self._group_by)
-
-    def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'JoinQuery3[TC, TC1, TC2]':
-        return JoinQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [*(self._selection or []), sel, *sels], self._order_by, self._group_by)
-
-    def select_computed(self, computed: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any], *more: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any]) -> 'JoinQuery3Computed[TC, TC1, TC2]':
-        return JoinQuery3Computed(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._order_by, self._group_by, [computed, *more])
-
-    def select_computed_more(self, computed: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any], *more: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any]) -> 'JoinQuery3Computed[TC, TC1, TC2]':
-        return JoinQuery3Computed(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._order_by, self._group_by, [computed, *more])
-
-    def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2]) -> 'JoinQuery3[TC, TC1, TC2]':
-        return JoinQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, list(order_by), self._group_by)
-
-    def order_by_more(self, column: Prop[TC, Any] | PropOpt[TC, Any] | Prop[TC1, Any] | PropOpt[TC1, Any] | Prop[TC2, Any] | PropOpt[TC2, Any], direction: Direction = Direction.ASC) -> 'JoinQuery3[TC, TC1, TC2]':
-        new_entry: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] = OrderBy(column, direction) # type: ignore[assignment]
-        return JoinQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, [*self._order_by, new_entry], self._group_by)
-
-    def group_by(self, *group_by: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'JoinQuery3[TC, TC1, TC2]':
-        return JoinQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._order_by, list(group_by))
-
-    def group_by_more(self, col: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any], *cols: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'JoinQuery3[TC, TC1, TC2]':
-        return JoinQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._order_by, [*self._group_by, col, *cols])
-
-    def join_inner(self, next: Type[TC3], on: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
-        return JoinQuery4(self.table1, self.table2, self.table3, next, self.join_type_2, self.on_2, self.join_type_3, self.on_3, JoinType.Inner, on, self._selection, self._order_by, self._group_by)
-
-    def join_left(self, next: Type[TC3], on: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
-        return JoinQuery4(self.table1, self.table2, self.table3, next, self.join_type_2, self.on_2, self.join_type_3, self.on_3, JoinType.Left, on, self._selection, self._order_by, self._group_by)
-
-    def where(self, constraint: Constraint3[TC, TC1, TC2] | None = None) -> 'Query3[TC, TC1, TC2]':
-        return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, _resolve_selection(self._selection, self.table1, self.table2, self.table3), constraint, self._order_by, self._group_by)
-
-@dataclass(frozen=True)
-class JoinQuery3Computed(Generic[TC, TC1, TC2]):
-    table1: Type[TC]
-    table2: Type[TC1]
-    table3: Type[TC2]
-    join_type_2: JoinType
-    on_2: Constraint2[TC, TC1] | None
-    join_type_3: JoinType
-    on_3: Constraint3[TC, TC1, TC2] | None
-    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]] | None
-    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2]]
-    _group_by: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]]
-    _computed: Sequence[Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any]]
-    _having: HavingConstraint3[TC, TC1, TC2] | None = None
-
-    def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'JoinQuery3Computed[TC, TC1, TC2]':
-        return JoinQuery3Computed(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [sel, *sels], self._order_by, self._group_by, self._computed, self._having)
-
-    def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'JoinQuery3Computed[TC, TC1, TC2]':
-        return JoinQuery3Computed(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [*(self._selection or []), sel, *sels], self._order_by, self._group_by, self._computed, self._having)
-
-    def select_computed(self, computed: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any], *more: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any]) -> 'JoinQuery3Computed[TC, TC1, TC2]':
-        return JoinQuery3Computed(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._order_by, self._group_by, [computed, *more], self._having)
-
-    def select_computed_more(self, computed: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any], *more: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any]) -> 'JoinQuery3Computed[TC, TC1, TC2]':
-        return JoinQuery3Computed(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._order_by, self._group_by, [*self._computed, computed, *more], self._having)
-
-    def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2]) -> 'JoinQuery3Computed[TC, TC1, TC2]':
-        return JoinQuery3Computed(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, list(order_by), self._group_by, self._computed, self._having)
-
-    def order_by_more(self, column: Prop[TC, Any] | PropOpt[TC, Any] | Prop[TC1, Any] | PropOpt[TC1, Any] | Prop[TC2, Any] | PropOpt[TC2, Any], direction: Direction = Direction.ASC) -> 'JoinQuery3Computed[TC, TC1, TC2]':
-        new_entry: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] = OrderBy(column, direction) # type: ignore[assignment]
-        return JoinQuery3Computed(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, [*self._order_by, new_entry], self._group_by, self._computed, self._having)
-
-    def group_by(self, *group_by: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'JoinQuery3Computed[TC, TC1, TC2]':
-        return JoinQuery3Computed(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._order_by, list(group_by), self._computed, self._having)
-
-    def group_by_more(self, col: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any], *cols: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'JoinQuery3Computed[TC, TC1, TC2]':
-        return JoinQuery3Computed(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._order_by, [*self._group_by, col, *cols], self._computed, self._having)
-
-    def having(self, constraint: HavingConstraint3[TC, TC1, TC2] | None = None) -> 'JoinQuery3Computed[TC, TC1, TC2]':
-        return JoinQuery3Computed(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._order_by, self._group_by, self._computed, constraint)
-
-    def having_and(self, constraint: HavingConstraint3[TC, TC1, TC2]) -> 'JoinQuery3Computed[TC, TC1, TC2]':
-        return self.having(constraint if self._having is None else self._having.AND(constraint))
-
-    def having_or(self, constraint: HavingConstraint3[TC, TC1, TC2]) -> 'JoinQuery3Computed[TC, TC1, TC2]':
-        return self.having(constraint if self._having is None else self._having.OR(constraint))
-
-    def join_inner(self, next: Type[TC3], on: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'JoinQuery4Computed[TC, TC1, TC2, TC3]':
-        # See JoinQuery2Computed.join_inner(): a HavingConstraintN can't carry across a join.
-        assert self._having is None, 'Cannot join after having() has been set -- call join_inner/join_left before having()'
-        return JoinQuery4Computed(self.table1, self.table2, self.table3, next, self.join_type_2, self.on_2, self.join_type_3, self.on_3, JoinType.Inner, on, self._selection, self._order_by, self._group_by, self._computed)
-
-    def join_left(self, next: Type[TC3], on: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'JoinQuery4Computed[TC, TC1, TC2, TC3]':
-        assert self._having is None, 'Cannot join after having() has been set -- call join_inner/join_left before having()'
-        return JoinQuery4Computed(self.table1, self.table2, self.table3, next, self.join_type_2, self.on_2, self.join_type_3, self.on_3, JoinType.Left, on, self._selection, self._order_by, self._group_by, self._computed)
-
-    def where(self, constraint: Constraint3[TC, TC1, TC2] | None = None) -> 'ComputedQuery3[TC, TC1, TC2]':
-        # See SelectQueryComputed.where(): default to no plain columns, not every column.
-        return ComputedQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, list(self._selection or []), constraint, self._order_by, self._group_by, self._computed, self._having)
+# --- 3 tables ---
 
 @dataclass(frozen=True)
 class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2]]]):
@@ -889,7 +687,7 @@ class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialMode
     on_2: Constraint2[TC, TC1] | None
     join_type_3: JoinType
     on_3: Constraint3[TC, TC1, TC2] | None
-    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]]
+    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]] | None = None
     _where: Constraint3[TC, TC1, TC2] | None = None
     _order_by: Sequence[OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2]] = ()
     _group_by: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]] = ()
@@ -898,16 +696,13 @@ class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialMode
         return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [sel, *sels], self._where, self._order_by, self._group_by)
 
     def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'Query3[TC, TC1, TC2]':
-        return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [*self._selection, sel, *sels], self._where, self._order_by, self._group_by)
+        return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [*(self._selection or []), sel, *sels], self._where, self._order_by, self._group_by)
 
     def select_computed(self, computed: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any], *more: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any]) -> 'ComputedQuery3[TC, TC1, TC2]':
         return ComputedQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._where, self._order_by, self._group_by, [computed, *more])
 
     def select_computed_more(self, computed: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any], *more: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any]) -> 'ComputedQuery3[TC, TC1, TC2]':
         return ComputedQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._where, self._order_by, self._group_by, [computed, *more])
-
-    def where(self, constraint: Constraint3[TC, TC1, TC2] | None = None) -> 'Query3[TC, TC1, TC2]':
-        return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, constraint, self._order_by, self._group_by)
 
     def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2]) -> 'Query3[TC, TC1, TC2]':
         return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._where, list(order_by), self._group_by)
@@ -922,12 +717,39 @@ class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialMode
     def group_by_more(self, col: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any], *cols: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'Query3[TC, TC1, TC2]':
         return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._where, self._order_by, [*self._group_by, col, *cols])
 
+    def join_inner(self, next: Type[TC3], on: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'Query4[TC, TC1, TC2, TC3]':
+        return Query4(
+            self.table1, self.table2, self.table3, next, self.join_type_2, self.on_2, self.join_type_3, self.on_3, JoinType.Inner, on,
+            self._selection, None if self._where is None else self._where.incr_arity(),
+            self._order_by, self._group_by,
+        )
+
+    def join_left(self, next: Type[TC3], on: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'Query4[TC, TC1, TC2, TC3]':
+        return Query4(
+            self.table1, self.table2, self.table3, next, self.join_type_2, self.on_2, self.join_type_3, self.on_3, JoinType.Left, on,
+            self._selection, None if self._where is None else self._where.incr_arity(),
+            self._order_by, self._group_by,
+        )
+
+    def where(self, constraint: Constraint3[TC, TC1, TC2] | None = None) -> 'Query3[TC, TC1, TC2]':
+        return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, constraint, self._order_by, self._group_by)
+
+    def where_and(self, constraint: Constraint3[TC, TC1, TC2]) -> 'Query3[TC, TC1, TC2]':
+        return self.where(constraint if self._where is None else self._where.AND(constraint))
+
+    def where_or(self, constraint: Constraint3[TC, TC1, TC2]) -> 'Query3[TC, TC1, TC2]':
+        return self.where(constraint if self._where is None else self._where.OR(constraint))
+
+    def _resolved_selection(self) -> List[PropSelect[Any, Any]]:
+        return _resolve_selection(self._selection, self.table1, self.table2, self.table3)
+
     def to_sql(self) -> str:
-        assert len(self._selection) > 0, 'You must select at least one column'
+        selection = self._resolved_selection()
+        assert len(selection) > 0, 'You must select at least one column'
         assert self.on_2 is not None, 'You must specify a join condition for join 2'
         assert self.on_3 is not None, 'You must specify a join condition for join 3'
 
-        selections = ', '.join(_qualified_label(p) for p in self._selection)
+        selections = ', '.join(_qualified_label(p) for p in selection)
         where_clause = '' if self._where is None else ' WHERE ' + self._where.to_sql()
         group_by_clause = _group_by_sql(self._group_by, qualify=True)
         order_by_clause = _order_by_sql(self._order_by, qualify=True)
@@ -941,11 +763,12 @@ class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialMode
         return f'SELECT {selections} FROM {from_clause}{where_clause}{group_by_clause}{order_by_clause};'
 
     def to_sql_params(self) -> Tuple[str, List[Any]]:
-        assert len(self._selection) > 0, 'You must select at least one column'
+        selection = self._resolved_selection()
+        assert len(selection) > 0, 'You must select at least one column'
         assert self.on_2 is not None, 'You must specify a join condition for join 2'
         assert self.on_3 is not None, 'You must specify a join condition for join 3'
 
-        selections = ', '.join(_qualified_label(p) for p in self._selection)
+        selections = ', '.join(_qualified_label(p) for p in selection)
         group_by_clause = _group_by_sql(self._group_by, qualify=True)
         order_by_clause = _order_by_sql(self._order_by, qualify=True)
         params: List[Any] = []
@@ -972,27 +795,24 @@ class ComputedQuery3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], Par
     on_2: Constraint2[TC, TC1] | None
     join_type_3: JoinType
     on_3: Constraint3[TC, TC1, TC2] | None
-    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]]
-    _where: Constraint3[TC, TC1, TC2] | None
-    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2]]
-    _group_by: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]]
-    _computed: Sequence[Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any]]
+    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]] | None = None
+    _where: Constraint3[TC, TC1, TC2] | None = None
+    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2]] = ()
+    _group_by: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]] = ()
+    _computed: Sequence[Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any]] = ()
     _having: HavingConstraint3[TC, TC1, TC2] | None = None
 
     def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'ComputedQuery3[TC, TC1, TC2]':
         return ComputedQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [sel, *sels], self._where, self._order_by, self._group_by, self._computed, self._having)
 
     def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'ComputedQuery3[TC, TC1, TC2]':
-        return ComputedQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [*self._selection, sel, *sels], self._where, self._order_by, self._group_by, self._computed, self._having)
+        return ComputedQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [*(self._selection or []), sel, *sels], self._where, self._order_by, self._group_by, self._computed, self._having)
 
     def select_computed(self, computed: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any], *more: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any]) -> 'ComputedQuery3[TC, TC1, TC2]':
         return ComputedQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._where, self._order_by, self._group_by, [computed, *more], self._having)
 
     def select_computed_more(self, computed: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any], *more: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any]) -> 'ComputedQuery3[TC, TC1, TC2]':
         return ComputedQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._where, self._order_by, self._group_by, [*self._computed, computed, *more], self._having)
-
-    def where(self, constraint: Constraint3[TC, TC1, TC2] | None = None) -> 'ComputedQuery3[TC, TC1, TC2]':
-        return ComputedQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, constraint, self._order_by, self._group_by, self._computed, self._having)
 
     def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2]) -> 'ComputedQuery3[TC, TC1, TC2]':
         return ComputedQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, self._where, list(order_by), self._group_by, self._computed, self._having)
@@ -1016,12 +836,41 @@ class ComputedQuery3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], Par
     def having_or(self, constraint: HavingConstraint3[TC, TC1, TC2]) -> 'ComputedQuery3[TC, TC1, TC2]':
         return self.having(constraint if self._having is None else self._having.OR(constraint))
 
+    def where(self, constraint: Constraint3[TC, TC1, TC2] | None = None) -> 'ComputedQuery3[TC, TC1, TC2]':
+        return ComputedQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self._selection, constraint, self._order_by, self._group_by, self._computed, self._having)
+
+    def where_and(self, constraint: Constraint3[TC, TC1, TC2]) -> 'ComputedQuery3[TC, TC1, TC2]':
+        return self.where(constraint if self._where is None else self._where.AND(constraint))
+
+    def where_or(self, constraint: Constraint3[TC, TC1, TC2]) -> 'ComputedQuery3[TC, TC1, TC2]':
+        return self.where(constraint if self._where is None else self._where.OR(constraint))
+
+    def join_inner(self, next: Type[TC3], on: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'ComputedQuery4[TC, TC1, TC2, TC3]':
+        return ComputedQuery4(
+            self.table1, self.table2, self.table3, next, self.join_type_2, self.on_2, self.join_type_3, self.on_3, JoinType.Inner, on,
+            self._selection, None if self._where is None else self._where.incr_arity(),
+            self._order_by, self._group_by, self._computed,
+            None if self._having is None else self._having.incr_arity(),
+        )
+
+    def join_left(self, next: Type[TC3], on: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'ComputedQuery4[TC, TC1, TC2, TC3]':
+        return ComputedQuery4(
+            self.table1, self.table2, self.table3, next, self.join_type_2, self.on_2, self.join_type_3, self.on_3, JoinType.Left, on,
+            self._selection, None if self._where is None else self._where.incr_arity(),
+            self._order_by, self._group_by, self._computed,
+            None if self._having is None else self._having.incr_arity(),
+        )
+
+    def _resolved_selection(self) -> List[PropSelect[Any, Any]]:
+        return list(self._selection or [])
+
     def to_sql(self) -> str:
-        assert len(self._selection) > 0 or len(self._computed) > 0, 'You must select at least one column or computed value'
+        selection = self._resolved_selection()
+        assert len(selection) > 0 or len(self._computed) > 0, 'You must select at least one column or computed value'
         assert self.on_2 is not None, 'You must specify a join condition for join 2'
         assert self.on_3 is not None, 'You must specify a join condition for join 3'
 
-        selections = ', '.join([*(_qualified_label(p) for p in self._selection), *_computed_sql_parts(self._computed, qualify=True)])
+        selections = ', '.join([*(_qualified_label(p) for p in selection), *_computed_sql_parts(self._computed, qualify=True)])
         where_clause = '' if self._where is None else ' WHERE ' + self._where.to_sql()
         group_by_clause = _group_by_sql(self._group_by, qualify=True)
         having_clause = '' if self._having is None else ' HAVING ' + self._having.to_sql()
@@ -1036,11 +885,12 @@ class ComputedQuery3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], Par
         return f'SELECT {selections} FROM {from_clause}{where_clause}{group_by_clause}{having_clause}{order_by_clause};'
 
     def to_sql_params(self) -> Tuple[str, List[Any]]:
-        assert len(self._selection) > 0 or len(self._computed) > 0, 'You must select at least one column or computed value'
+        selection = self._resolved_selection()
+        assert len(selection) > 0 or len(self._computed) > 0, 'You must select at least one column or computed value'
         assert self.on_2 is not None, 'You must specify a join condition for join 2'
         assert self.on_3 is not None, 'You must specify a join condition for join 3'
 
-        selections = ', '.join([*(_qualified_label(p) for p in self._selection), *_computed_sql_parts(self._computed, qualify=True)])
+        selections = ', '.join([*(_qualified_label(p) for p in selection), *_computed_sql_parts(self._computed, qualify=True)])
         group_by_clause = _group_by_sql(self._group_by, qualify=True)
         order_by_clause = _order_by_sql(self._order_by, qualify=True)
         params: List[Any] = []
@@ -1064,105 +914,8 @@ class ComputedQuery3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], Par
             params += having_params
         return f'SELECT {selections} FROM {from_clause}{where_clause}{group_by_clause}{having_clause}{order_by_clause};', params
 
-@dataclass(frozen=True)
-class JoinQuery4(Generic[TC, TC1, TC2, TC3]):
-    table1: Type[TC]
-    table2: Type[TC1]
-    table3: Type[TC2]
-    table4: Type[TC3]
-    join_type_2: JoinType
-    on_2: Constraint2[TC, TC1] | None
-    join_type_3: JoinType
-    on_3: Constraint3[TC, TC1, TC2] | None
-    join_type_4: JoinType
-    on_4: Constraint4[TC, TC1, TC2, TC3] | None
-    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]] | None = None
-    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3]] = ()
-    _group_by: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]] = ()
 
-    def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
-        return JoinQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [sel, *sels], self._order_by, self._group_by)
-
-    def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
-        return JoinQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [*(self._selection or []), sel, *sels], self._order_by, self._group_by)
-
-    def select_computed(self, computed: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any], *more: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any]) -> 'JoinQuery4Computed[TC, TC1, TC2, TC3]':
-        return JoinQuery4Computed(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._order_by, self._group_by, [computed, *more])
-
-    def select_computed_more(self, computed: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any], *more: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any]) -> 'JoinQuery4Computed[TC, TC1, TC2, TC3]':
-        return JoinQuery4Computed(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._order_by, self._group_by, [computed, *more])
-
-    def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3]) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
-        return JoinQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, list(order_by), self._group_by)
-
-    def order_by_more(self, column: Prop[TC, Any] | PropOpt[TC, Any] | Prop[TC1, Any] | PropOpt[TC1, Any] | Prop[TC2, Any] | PropOpt[TC2, Any] | Prop[TC3, Any] | PropOpt[TC3, Any], direction: Direction = Direction.ASC) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
-        new_entry: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3] = OrderBy(column, direction) # type: ignore[assignment]
-        return JoinQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, [*self._order_by, new_entry], self._group_by)
-
-    def group_by(self, *group_by: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
-        return JoinQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._order_by, list(group_by))
-
-    def group_by_more(self, col: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any], *cols: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
-        return JoinQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._order_by, [*self._group_by, col, *cols])
-
-    def where(self, constraint: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'Query4[TC, TC1, TC2, TC3]':
-        return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, _resolve_selection(self._selection, self.table1, self.table2, self.table3, self.table4), constraint, self._order_by, self._group_by)
-
-@dataclass(frozen=True)
-class JoinQuery4Computed(Generic[TC, TC1, TC2, TC3]):
-    table1: Type[TC]
-    table2: Type[TC1]
-    table3: Type[TC2]
-    table4: Type[TC3]
-    join_type_2: JoinType
-    on_2: Constraint2[TC, TC1] | None
-    join_type_3: JoinType
-    on_3: Constraint3[TC, TC1, TC2] | None
-    join_type_4: JoinType
-    on_4: Constraint4[TC, TC1, TC2, TC3] | None
-    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]] | None
-    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3]]
-    _group_by: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]]
-    _computed: Sequence[Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any]]
-    _having: HavingConstraint4[TC, TC1, TC2, TC3] | None = None
-
-    def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'JoinQuery4Computed[TC, TC1, TC2, TC3]':
-        return JoinQuery4Computed(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [sel, *sels], self._order_by, self._group_by, self._computed, self._having)
-
-    def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'JoinQuery4Computed[TC, TC1, TC2, TC3]':
-        return JoinQuery4Computed(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [*(self._selection or []), sel, *sels], self._order_by, self._group_by, self._computed, self._having)
-
-    def select_computed(self, computed: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any], *more: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any]) -> 'JoinQuery4Computed[TC, TC1, TC2, TC3]':
-        return JoinQuery4Computed(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._order_by, self._group_by, [computed, *more], self._having)
-
-    def select_computed_more(self, computed: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any], *more: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any]) -> 'JoinQuery4Computed[TC, TC1, TC2, TC3]':
-        return JoinQuery4Computed(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._order_by, self._group_by, [*self._computed, computed, *more], self._having)
-
-    def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3]) -> 'JoinQuery4Computed[TC, TC1, TC2, TC3]':
-        return JoinQuery4Computed(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, list(order_by), self._group_by, self._computed, self._having)
-
-    def order_by_more(self, column: Prop[TC, Any] | PropOpt[TC, Any] | Prop[TC1, Any] | PropOpt[TC1, Any] | Prop[TC2, Any] | PropOpt[TC2, Any] | Prop[TC3, Any] | PropOpt[TC3, Any], direction: Direction = Direction.ASC) -> 'JoinQuery4Computed[TC, TC1, TC2, TC3]':
-        new_entry: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3] = OrderBy(column, direction) # type: ignore[assignment]
-        return JoinQuery4Computed(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, [*self._order_by, new_entry], self._group_by, self._computed, self._having)
-
-    def group_by(self, *group_by: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'JoinQuery4Computed[TC, TC1, TC2, TC3]':
-        return JoinQuery4Computed(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._order_by, list(group_by), self._computed, self._having)
-
-    def group_by_more(self, col: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any], *cols: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'JoinQuery4Computed[TC, TC1, TC2, TC3]':
-        return JoinQuery4Computed(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._order_by, [*self._group_by, col, *cols], self._computed, self._having)
-
-    def having(self, constraint: HavingConstraint4[TC, TC1, TC2, TC3] | None = None) -> 'JoinQuery4Computed[TC, TC1, TC2, TC3]':
-        return JoinQuery4Computed(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._order_by, self._group_by, self._computed, constraint)
-
-    def having_and(self, constraint: HavingConstraint4[TC, TC1, TC2, TC3]) -> 'JoinQuery4Computed[TC, TC1, TC2, TC3]':
-        return self.having(constraint if self._having is None else self._having.AND(constraint))
-
-    def having_or(self, constraint: HavingConstraint4[TC, TC1, TC2, TC3]) -> 'JoinQuery4Computed[TC, TC1, TC2, TC3]':
-        return self.having(constraint if self._having is None else self._having.OR(constraint))
-
-    def where(self, constraint: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'ComputedQuery4[TC, TC1, TC2, TC3]':
-        # See SelectQueryComputed.where(): default to no plain columns, not every column.
-        return ComputedQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, list(self._selection or []), constraint, self._order_by, self._group_by, self._computed, self._having)
+# --- 4 tables ---
 
 @dataclass(frozen=True)
 class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2], PartialModel[TC3]]]):
@@ -1176,7 +929,7 @@ class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], Partia
     on_3: Constraint3[TC, TC1, TC2] | None
     join_type_4: JoinType
     on_4: Constraint4[TC, TC1, TC2, TC3] | None
-    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]]
+    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]] | None = None
     _where: Constraint4[TC, TC1, TC2, TC3] | None = None
     _order_by: Sequence[OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3]] = ()
     _group_by: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]] = ()
@@ -1185,16 +938,13 @@ class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], Partia
         return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [sel, *sels], self._where, self._order_by, self._group_by)
 
     def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'Query4[TC, TC1, TC2, TC3]':
-        return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [*self._selection, sel, *sels], self._where, self._order_by, self._group_by)
+        return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [*(self._selection or []), sel, *sels], self._where, self._order_by, self._group_by)
 
     def select_computed(self, computed: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any], *more: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any]) -> 'ComputedQuery4[TC, TC1, TC2, TC3]':
         return ComputedQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._where, self._order_by, self._group_by, [computed, *more])
 
     def select_computed_more(self, computed: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any], *more: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any]) -> 'ComputedQuery4[TC, TC1, TC2, TC3]':
         return ComputedQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._where, self._order_by, self._group_by, [computed, *more])
-
-    def where(self, constraint: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'Query4[TC, TC1, TC2, TC3]':
-        return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, constraint, self._order_by, self._group_by)
 
     def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3]) -> 'Query4[TC, TC1, TC2, TC3]':
         return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._where, list(order_by), self._group_by)
@@ -1209,13 +959,26 @@ class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], Partia
     def group_by_more(self, col: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any], *cols: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'Query4[TC, TC1, TC2, TC3]':
         return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._where, self._order_by, [*self._group_by, col, *cols])
 
+    def where(self, constraint: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'Query4[TC, TC1, TC2, TC3]':
+        return Query4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, constraint, self._order_by, self._group_by)
+
+    def where_and(self, constraint: Constraint4[TC, TC1, TC2, TC3]) -> 'Query4[TC, TC1, TC2, TC3]':
+        return self.where(constraint if self._where is None else self._where.AND(constraint))
+
+    def where_or(self, constraint: Constraint4[TC, TC1, TC2, TC3]) -> 'Query4[TC, TC1, TC2, TC3]':
+        return self.where(constraint if self._where is None else self._where.OR(constraint))
+
+    def _resolved_selection(self) -> List[PropSelect[Any, Any]]:
+        return _resolve_selection(self._selection, self.table1, self.table2, self.table3, self.table4)
+
     def to_sql(self) -> str:
-        assert len(self._selection) > 0, 'You must select at least one column'
+        selection = self._resolved_selection()
+        assert len(selection) > 0, 'You must select at least one column'
         assert self.on_2 is not None, 'You must specify a join condition for join 2'
         assert self.on_3 is not None, 'You must specify a join condition for join 3'
         assert self.on_4 is not None, 'You must specify a join condition for join 4'
 
-        selections = ', '.join(_qualified_label(p) for p in self._selection)
+        selections = ', '.join(_qualified_label(p) for p in selection)
         where_clause = '' if self._where is None else ' WHERE ' + self._where.to_sql()
         group_by_clause = _group_by_sql(self._group_by, qualify=True)
         order_by_clause = _order_by_sql(self._order_by, qualify=True)
@@ -1231,12 +994,13 @@ class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], Partia
         return f'SELECT {selections} FROM {from_clause}{where_clause}{group_by_clause}{order_by_clause};'
 
     def to_sql_params(self) -> Tuple[str, List[Any]]:
-        assert len(self._selection) > 0, 'You must select at least one column'
+        selection = self._resolved_selection()
+        assert len(selection) > 0, 'You must select at least one column'
         assert self.on_2 is not None, 'You must specify a join condition for join 2'
         assert self.on_3 is not None, 'You must specify a join condition for join 3'
         assert self.on_4 is not None, 'You must specify a join condition for join 4'
 
-        selections = ', '.join(_qualified_label(p) for p in self._selection)
+        selections = ', '.join(_qualified_label(p) for p in selection)
         group_by_clause = _group_by_sql(self._group_by, qualify=True)
         order_by_clause = _order_by_sql(self._order_by, qualify=True)
         params: List[Any] = []
@@ -1269,27 +1033,24 @@ class ComputedQuery4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC]
     on_3: Constraint3[TC, TC1, TC2] | None
     join_type_4: JoinType
     on_4: Constraint4[TC, TC1, TC2, TC3] | None
-    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]]
-    _where: Constraint4[TC, TC1, TC2, TC3] | None
-    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3]]
-    _group_by: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]]
-    _computed: Sequence[Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any]]
+    _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]] | None = None
+    _where: Constraint4[TC, TC1, TC2, TC3] | None = None
+    _order_by: Sequence[OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3]] = ()
+    _group_by: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]] = ()
+    _computed: Sequence[Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any]] = ()
     _having: HavingConstraint4[TC, TC1, TC2, TC3] | None = None
 
     def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'ComputedQuery4[TC, TC1, TC2, TC3]':
         return ComputedQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [sel, *sels], self._where, self._order_by, self._group_by, self._computed, self._having)
 
     def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'ComputedQuery4[TC, TC1, TC2, TC3]':
-        return ComputedQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [*self._selection, sel, *sels], self._where, self._order_by, self._group_by, self._computed, self._having)
+        return ComputedQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, [*(self._selection or []), sel, *sels], self._where, self._order_by, self._group_by, self._computed, self._having)
 
     def select_computed(self, computed: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any], *more: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any]) -> 'ComputedQuery4[TC, TC1, TC2, TC3]':
         return ComputedQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._where, self._order_by, self._group_by, [computed, *more], self._having)
 
     def select_computed_more(self, computed: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any], *more: Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any]) -> 'ComputedQuery4[TC, TC1, TC2, TC3]':
         return ComputedQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._where, self._order_by, self._group_by, [*self._computed, computed, *more], self._having)
-
-    def where(self, constraint: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'ComputedQuery4[TC, TC1, TC2, TC3]':
-        return ComputedQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, constraint, self._order_by, self._group_by, self._computed, self._having)
 
     def order_by(self, *order_by: OrderBy[TC] | OrderBy[TC1] | OrderBy[TC2] | OrderBy[TC3]) -> 'ComputedQuery4[TC, TC1, TC2, TC3]':
         return ComputedQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, self._where, list(order_by), self._group_by, self._computed, self._having)
@@ -1313,13 +1074,26 @@ class ComputedQuery4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC]
     def having_or(self, constraint: HavingConstraint4[TC, TC1, TC2, TC3]) -> 'ComputedQuery4[TC, TC1, TC2, TC3]':
         return self.having(constraint if self._having is None else self._having.OR(constraint))
 
+    def where(self, constraint: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'ComputedQuery4[TC, TC1, TC2, TC3]':
+        return ComputedQuery4(self.table1, self.table2, self.table3, self.table4, self.join_type_2, self.on_2, self.join_type_3, self.on_3, self.join_type_4, self.on_4, self._selection, constraint, self._order_by, self._group_by, self._computed, self._having)
+
+    def where_and(self, constraint: Constraint4[TC, TC1, TC2, TC3]) -> 'ComputedQuery4[TC, TC1, TC2, TC3]':
+        return self.where(constraint if self._where is None else self._where.AND(constraint))
+
+    def where_or(self, constraint: Constraint4[TC, TC1, TC2, TC3]) -> 'ComputedQuery4[TC, TC1, TC2, TC3]':
+        return self.where(constraint if self._where is None else self._where.OR(constraint))
+
+    def _resolved_selection(self) -> List[PropSelect[Any, Any]]:
+        return list(self._selection or [])
+
     def to_sql(self) -> str:
-        assert len(self._selection) > 0 or len(self._computed) > 0, 'You must select at least one column or computed value'
+        selection = self._resolved_selection()
+        assert len(selection) > 0 or len(self._computed) > 0, 'You must select at least one column or computed value'
         assert self.on_2 is not None, 'You must specify a join condition for join 2'
         assert self.on_3 is not None, 'You must specify a join condition for join 3'
         assert self.on_4 is not None, 'You must specify a join condition for join 4'
 
-        selections = ', '.join([*(_qualified_label(p) for p in self._selection), *_computed_sql_parts(self._computed, qualify=True)])
+        selections = ', '.join([*(_qualified_label(p) for p in selection), *_computed_sql_parts(self._computed, qualify=True)])
         where_clause = '' if self._where is None else ' WHERE ' + self._where.to_sql()
         group_by_clause = _group_by_sql(self._group_by, qualify=True)
         having_clause = '' if self._having is None else ' HAVING ' + self._having.to_sql()
@@ -1336,12 +1110,13 @@ class ComputedQuery4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC]
         return f'SELECT {selections} FROM {from_clause}{where_clause}{group_by_clause}{having_clause}{order_by_clause};'
 
     def to_sql_params(self) -> Tuple[str, List[Any]]:
-        assert len(self._selection) > 0 or len(self._computed) > 0, 'You must select at least one column or computed value'
+        selection = self._resolved_selection()
+        assert len(selection) > 0 or len(self._computed) > 0, 'You must select at least one column or computed value'
         assert self.on_2 is not None, 'You must specify a join condition for join 2'
         assert self.on_3 is not None, 'You must specify a join condition for join 3'
         assert self.on_4 is not None, 'You must specify a join condition for join 4'
 
-        selections = ', '.join([*(_qualified_label(p) for p in self._selection), *_computed_sql_parts(self._computed, qualify=True)])
+        selections = ', '.join([*(_qualified_label(p) for p in selection), *_computed_sql_parts(self._computed, qualify=True)])
         group_by_clause = _group_by_sql(self._group_by, qualify=True)
         order_by_clause = _order_by_sql(self._order_by, qualify=True)
         params: List[Any] = []

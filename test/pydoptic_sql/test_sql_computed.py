@@ -127,12 +127,36 @@ def test_select_computed_pure_aggregate_has_no_plain_columns():
 
     assert query.to_sql() == 'SELECT SUM(age) AS worker_age_sum FROM worker;'
 
-def test_select_computed_after_where_preserves_already_resolved_selection():
-    # Calling select_computed AFTER where() (with no explicit select()) inherits whatever selection
-    # where() already resolved to -- which defaults to every column, same as any other plain query.
+def test_select_computed_to_sql_available_without_calling_where():
+    query = SqlQuery.from_table(Worker).select_computed(SqlQuery.sum(Worker.age))
+
+    assert query.to_sql() == 'SELECT SUM(age) AS worker_age_sum FROM worker;'
+
+def test_select_computed_where_and_combines_with_existing_constraint():
+    base = SqlQuery.from_table(Worker).select_computed(SqlQuery.sum(Worker.age)).where(Constraint.eq(Worker.department_id, 1))
+    combined = base.where_and(Constraint.gt(Worker.age, 18))
+
+    assert combined.to_sql() == 'SELECT SUM(age) AS worker_age_sum FROM worker WHERE (department_id = 1 AND age > 18);'
+
+def test_select_computed_where_or_combines_with_existing_constraint():
+    base = SqlQuery.from_table(Worker).select_computed(SqlQuery.sum(Worker.age)).where(Constraint.eq(Worker.department_id, 1))
+    combined = base.where_or(Constraint.gt(Worker.age, 18))
+
+    assert combined.to_sql() == 'SELECT SUM(age) AS worker_age_sum FROM worker WHERE (department_id = 1 OR age > 18);'
+
+def test_select_computed_where_and_with_no_prior_constraint_just_sets_it():
+    query = SqlQuery.from_table(Worker).select_computed(SqlQuery.sum(Worker.age)).where_and(Constraint.eq(Worker.department_id, 1))
+
+    assert query.to_sql() == 'SELECT SUM(age) AS worker_age_sum FROM worker WHERE department_id = 1;'
+
+def test_select_computed_after_where_still_has_no_plain_columns():
+    # where() is just another constraint-setter now (it no longer "finalizes" a builder into a
+    # terminal class with a resolved selection), so calling it first doesn't change what an unset
+    # selection defaults to once select_computed is called -- still no plain columns, same as calling
+    # select_computed with no where() at all.
     query = SqlQuery.from_table(Worker).where().select_computed(SqlQuery.sum(Worker.age))
 
-    assert query.to_sql() == 'SELECT id, name, department_id, age, bonus, SUM(age) AS worker_age_sum FROM worker;'
+    assert query.to_sql() == 'SELECT SUM(age) AS worker_age_sum FROM worker;'
 
 def test_select_computed_more_appends():
     query = SqlQuery.from_table(Worker).select_computed(SqlQuery.sum(Worker.age)).where().select_computed_more(SqlQuery.count(Worker))

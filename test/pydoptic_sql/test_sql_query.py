@@ -4,7 +4,7 @@ import pytest
 
 from pydoptic_sql import SqlTable, ColumnType, PrimaryKey, AutoIncrement, column, SqlQuery, Constraint, Constraint2, Constraint3, Constraint4, Direction, OrderBy
 from pydoptic_sql.sql_constraint import BetweenConstraint, InConstraint
-from pydoptic_sql.sql_query import Query1, UpdateQuery, JoinType, JoinQuery2, JoinQuery3, Query2, Query3, Query4
+from pydoptic_sql.sql_query import Query1, UpdateQuery, JoinType, Query2, Query3, Query4
 from pydoptic import Prop, PropOpt
 
 
@@ -397,6 +397,40 @@ def test_select_query_where_replaces_previous_where():
     assert updated.to_sql() == 'SELECT id FROM employee WHERE age = 2;'
 
 
+def test_select_query_to_sql_available_without_calling_where():
+    # where()/having() no longer "finalize" a separate builder class -- to_sql()/to_sql_params() are
+    # available at every stage, whether or not where() was ever called.
+    query = SqlQuery.from_table(Employee).select(Employee.id)
+
+    assert query.to_sql() == 'SELECT id FROM employee;'
+
+
+def test_select_query_where_and_combines_with_existing_constraint():
+    base = SqlQuery.from_table(Employee).select(Employee.id).where(Constraint.eq(Employee.age, 1))
+    combined = base.where_and(Constraint.eq(Employee.active, True))
+
+    assert combined.to_sql() == 'SELECT id FROM employee WHERE (age = 1 AND active = True);'
+
+
+def test_select_query_where_or_combines_with_existing_constraint():
+    base = SqlQuery.from_table(Employee).select(Employee.id).where(Constraint.eq(Employee.age, 1))
+    combined = base.where_or(Constraint.eq(Employee.active, True))
+
+    assert combined.to_sql() == 'SELECT id FROM employee WHERE (age = 1 OR active = True);'
+
+
+def test_select_query_where_and_with_no_prior_constraint_just_sets_it():
+    query = SqlQuery.from_table(Employee).select(Employee.id).where_and(Constraint.eq(Employee.age, 1))
+
+    assert query.to_sql() == 'SELECT id FROM employee WHERE age = 1;'
+
+
+def test_select_query_where_or_with_no_prior_constraint_just_sets_it():
+    query = SqlQuery.from_table(Employee).select(Employee.id).where_or(Constraint.eq(Employee.age, 1))
+
+    assert query.to_sql() == 'SELECT id FROM employee WHERE age = 1;'
+
+
 # --- ORDER BY (single table) ---
 
 def test_select_query_without_order_by_omits_order_by_clause():
@@ -455,7 +489,7 @@ def test_order_by_contributes_no_query_params():
     assert params == [True]
 
 
-# --- JOIN: 2 tables (JoinQuery2 -> Query2) ---
+# --- JOIN: 2 tables (Query2) ---
 
 def test_join_query2_inner():
     query = SqlQuery.from_table(Worker).join_inner(Department, Constraint2.eq(Worker.department_id, Department.id)).select(
@@ -557,6 +591,67 @@ def test_join_query2_where_replaces_previous_where():
     )
 
 
+def test_join_query2_where_and_combines_with_existing_constraint():
+    base = SqlQuery.from_table(Worker).join_inner(Department, Constraint2.eq(Worker.department_id, Department.id)).select(
+        Worker.name,
+    ).where(Constraint2.eq(Worker.age, 30))
+    combined = base.where_and(Constraint2.eq(Department.name, 'Engineering'))
+
+    assert combined.to_sql() == (
+        "SELECT worker.name FROM worker INNER JOIN department ON worker.department_id = department.id "
+        "WHERE (worker.age = 30 AND department.name = 'Engineering');"
+    )
+
+
+def test_join_query2_where_or_combines_with_existing_constraint():
+    base = SqlQuery.from_table(Worker).join_inner(Department, Constraint2.eq(Worker.department_id, Department.id)).select(
+        Worker.name,
+    ).where(Constraint2.eq(Worker.age, 30))
+    combined = base.where_or(Constraint2.eq(Department.name, 'Engineering'))
+
+    assert combined.to_sql() == (
+        "SELECT worker.name FROM worker INNER JOIN department ON worker.department_id = department.id "
+        "WHERE (worker.age = 30 OR department.name = 'Engineering');"
+    )
+
+
+def test_join_query2_to_sql_available_without_calling_where():
+    query = SqlQuery.from_table(Worker).join_inner(Department, Constraint2.eq(Worker.department_id, Department.id)).select(Worker.name)
+
+    assert query.to_sql() == (
+        'SELECT worker.name FROM worker INNER JOIN department ON worker.department_id = department.id;'
+    )
+
+
+def test_where_set_before_join_widens_via_incr_arity():
+    # Constraint.incr_arity() (see sql_constraint.py) lets a WHERE clause set before a join safely
+    # widen to the join's arity -- the same operands, rendered qualified now that there's more than
+    # one table in scope.
+    query = SqlQuery.from_table(Worker).where(Constraint.gt(Worker.age, 21)).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).select(Worker.name)
+
+    assert query.to_sql() == (
+        'SELECT worker.name FROM worker INNER JOIN department ON worker.department_id = department.id '
+        'WHERE worker.age > 21;'
+    )
+
+
+def test_where_set_before_join_widens_through_two_joins():
+    query = SqlQuery.from_table(Worker).where(Constraint.gt(Worker.age, 21)).join_inner(
+        Department, Constraint2.eq(Worker.department_id, Department.id),
+    ).join_inner(
+        Project, Constraint3.eq(Project.department_id, Department.id),
+    ).select(Project.name)
+
+    assert query.to_sql() == (
+        'SELECT project.name FROM worker '
+        'INNER JOIN department ON worker.department_id = department.id '
+        'INNER JOIN project ON project.department_id = department.id '
+        'WHERE worker.age > 21;'
+    )
+
+
 def test_join_query2_can_change_selection_after_finalizing():
     finalized = SqlQuery.from_table(Worker).join_inner(Department, Constraint2.eq(Worker.department_id, Department.id)).select(
         Worker.name,
@@ -571,7 +666,7 @@ def test_join_query2_can_change_selection_after_finalizing():
     )
 
 
-# --- JOIN: 3 tables (SelectQuery -> JoinQuery2 -> JoinQuery3 -> Query3) ---
+# --- JOIN: 3 tables (Query3) ---
 
 def test_join_query3_chains_a_third_table():
     query = SqlQuery.from_table(Worker).join_inner(
@@ -658,7 +753,7 @@ def test_join_query3_defaults_to_selecting_every_column_of_every_table():
 
 
 def test_join_query3_requires_on_condition_for_each_join_step():
-    missing_first_on = JoinQuery3(
+    missing_first_on = Query3(
         Worker, Department, Project,
         JoinType.Inner, None,
         JoinType.Inner, Constraint3.eq(Project.department_id, Department.id),
@@ -673,7 +768,7 @@ def test_join_query3_requires_on_condition_for_each_join_step():
         missing_second_on.where().to_sql()
 
 
-# --- JOIN: 4 tables (JoinQuery3 -> JoinQuery4 -> Query4) ---
+# --- JOIN: 4 tables (Query4) ---
 
 def test_join_query4_chains_a_fourth_table():
     query = SqlQuery.from_table(Worker).join_inner(

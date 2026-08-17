@@ -37,14 +37,28 @@ PYTHONPATH=src venv/bin/python -m pytest test -q
 
 ## Current state
 
-- Everything through **"Add computed (aggregate) column support to the SqlQuery DSL"** (commit
-  `930d760`) is committed on `main`.
-- **HAVING support is built, tested, and verified, but not yet committed.** New/modified files:
-  `src/pydoptic_sql/sql_having.py` (new), `src/pydoptic_sql/sql_query.py` (modified),
-  `src/pydoptic_sql/__init__.py` (modified), `test/pydoptic_sql/test_sql_having.py` (new),
-  `test/pydoptic_sql/test_sql_service.py` (modified). Commit these (with the user's go-ahead) before
-  starting anything new, or the next session will have to rediscover this same context.
-- mypy is clean (27 source files). Full test suite is 282 passed (unit tests + live-Postgres
+- Everything through **"Add HAVING support to the SqlQuery DSL"** (commit `61c212a`) is committed on
+  `main`.
+- Since then, two more features landed in the same session, **built, tested, and verified, but not
+  yet committed**:
+  1. **`Constraint.incr_arity()` / `HavingConstraint.incr_arity()`** (arities 1→2, 2→3, 3→4) on every
+     concrete subclass (`Or`/`And`/`Not`/`Comp`/`Between`/`In` and their `Having` counterparts) in
+     `sql_constraint.py`/`sql_having.py` — rewraps the same operands into the next arity's class.
+  2. **Collapsed the builder/terminal split** in `sql_query.py`: `SelectQuery`/`JoinQuery2..4`
+     (plain and `Computed`) are gone, merged into `Query1..4`/`ComputedQuery1..4`, each directly
+     executable (`to_sql`/`to_sql_params`) at every stage. `join_inner`/`join_left` now call
+     `incr_arity()` on `_where` (and `_having`, for `Computed` queries) instead of requiring them
+     unset. Added `where_and`/`where_or` (mirroring the existing `having_and`/`having_or`). This is
+     exactly the redesign flagged as pending in the previous version of this doc — see "The two arity
+     strategies" below for the corrected picture.
+  Modified files: `src/pydoptic_sql/sql_constraint.py`, `src/pydoptic_sql/sql_having.py`,
+  `src/pydoptic_sql/sql_query.py`, `src/pydoptic_sql/sql_service.py` (updated to call the new
+  `query._resolved_selection()` instead of reading `query._selection` directly, since selection
+  resolution is now lazy — see below), plus matching test updates across
+  `test/pydoptic_sql/test_sql_{constraint,having,query,computed,service}.py`. Commit these (with the
+  user's go-ahead) before starting anything new, or the next session will have to rediscover this same
+  context.
+- mypy is clean (27 source files). Full test suite is 299 passed (unit tests + live-Postgres
   integration tests — the latter require the `db` container above to be running).
 
 ## Module map (`src/pydoptic_sql/`)
@@ -52,11 +66,11 @@ PYTHONPATH=src venv/bin/python -m pytest test -q
 | File | Purpose |
 |---|---|
 | `sql_table.py` | `SqlTable` base, `ColumnType`, `column()`, DDL column constraints (`PrimaryKey`, `Unique`, `AutoIncrement`, `ForeignKey`, `Check`, `Default`) |
-| `sql_constraint.py` | `Constraint`/`Constraint2`/`Constraint3`/`Constraint4` — WHERE and JOIN-ON conditions, one arity-ladder class family per number of tables a single constraint can span |
+| `sql_constraint.py` | `Constraint`/`Constraint2`/`Constraint3`/`Constraint4` — WHERE and JOIN-ON conditions, one arity-ladder class family per number of tables a single constraint can span. Every concrete subclass at arities 1-3 has `incr_arity()` rewrapping it into the next arity's class (no `Constraint5`, so arity 4 has none) |
 | `sql_order.py` | `Direction`, `OrderBy` — ORDER BY. Deliberately **not** an arity ladder (see below) |
 | `sql_computed.py` | `AggregateFunction`, `ComputedResult`, `Computed[TC, A]` — aggregate/computed columns (SUM/COUNT/AVG/MIN/MAX) |
-| `sql_having.py` | `HavingConstraint`/`2`/`3`/`4` — HAVING conditions; a genuinely separate hierarchy from `Constraint*`, not reused, so `Computed` values stay statically unusable in WHERE/ON |
-| `sql_query.py` | The big one (~1370 lines): `SqlQuery` base + every builder/terminal query class, both plain and "Computed" variants. See below for the full class list |
+| `sql_having.py` | `HavingConstraint`/`2`/`3`/`4` — HAVING conditions; a genuinely separate hierarchy from `Constraint*`, not reused, so `Computed` values stay statically unusable in WHERE/ON. Same `incr_arity()` treatment (arities 1-3) as `Constraint*` |
+| `sql_query.py` | The big one (~1150 lines): `SqlQuery` base + one query class per join arity, both plain (`Query1..4`) and `Computed` (`ComputedQuery1..4`) variants — no separate builder/terminal classes (see below). |
 | `sql_service.py` | `PsycoPgSqlClient`/`Transaction`/`*Response` — executes queries against Postgres via `psycopg`, decodes rows back into `PartialModel`/`ComputedResult` |
 
 Tests mirror this 1:1 under `test/pydoptic_sql/` (`test_sql_query.py`, `test_sql_constraint.py`,
@@ -85,20 +99,33 @@ to waste a lot of effort. The rule:
   class with a flag. `HavingConstraint*` mirrors this exact shape for the same reason (a HAVING clause
   can compare `SUM(worker.age) > department.min_age`).
 
-**Consequence:** an arity-ladder value (`Constraint2[TC,TC1]`, `HavingConstraint2[TC,TC1]`, ...)
-**cannot be carried across a `.join_inner()` call** the way `OrderBy`/`Computed` can — there's no
-union relationship between e.g. `HavingConstraint2` and `HavingConstraint3`, they're just unrelated
-classes, and even if you forced a cast, `.AND()`/`.OR()` on the narrower one wouldn't accept the wider
-one's argument type anyway. This is why:
-- `.where()` is only ever available on a **builder** (pre-join-completion) as the one-time transition
-  into a **terminal** query class that has no further `.join_inner()`/`.join_left()` — once a
-  `Constraint[TC]` is set, unqualified column references inside it could become ambiguous if you
-  joined in another table with a same-named column, and there's no way to safely re-type it for the
-  wider arity. This is *the* reason the builder/terminal split exists, not just a stylistic choice.
-- Similarly, `join_inner`/`join_left` on the "Computed" builder classes now `assert self._having is
-  None` — set `having()` after your last join, not before, or the join methods raise clearly rather
-  than silently dropping the constraint. (This is a **known, deliberate limitation**, not an oversight
-  — see "Known gaps" below for the planned fix.)
+**Historical note, now resolved:** an arity-ladder value (`Constraint2[TC,TC1]`,
+`HavingConstraint2[TC,TC1]`, ...) used to be unable to carry across a `.join_inner()` call the way
+`OrderBy`/`Computed` can, since `HavingConstraint2` and `HavingConstraint3` are just unrelated classes
+with no union relationship — this was *the* reason the old builder/terminal split existed (`.where()`
+was only available on a pre-join "builder" as the one-time transition into a "terminal" class with no
+further `.join_inner()`/`.join_left()`, and `join_inner`/`join_left` on the "Computed" builder classes
+`assert self._having is None`, i.e. joining after `having()` was set was rejected outright).
+
+**That limitation is gone.** Every concrete `Constraint`/`HavingConstraint` subclass at arities 1-3 now
+has `.incr_arity()`, which rewraps the exact same operands into the next arity's class (e.g.
+`CompConstraint[TC, A].incr_arity() -> CompConstraint2[TC, TC1, A]`, unifying the fresh `TC1` from
+context the same way `join_inner`'s own `next: Type[TC1]` parameter already did). So:
+- `QueryN`/`ComputedQueryN` are no longer split into builder/terminal classes — one class per arity,
+  directly executable (`to_sql`/`to_sql_params`) at every stage, whether or not `.where()`/`.having()`
+  was ever called.
+- `join_inner`/`join_left` carry `_where` (and `_having`, on `Computed` queries) across by calling
+  `.incr_arity()` on them when set, instead of requiring them unset. The old `assert self._having is
+  None` is gone.
+- `where_and`/`where_or` were added alongside the existing `having_and`/`having_or`, same AND/OR-compose-
+  or-just-set semantics.
+- One real behavior change from removing the builder/terminal split: `.where()` used to have a side
+  effect of eagerly resolving an unset selection to "every column" (since it was the one-time
+  transition to a terminal class with a resolved `_selection` field). Now selection resolution is
+  fully lazy — done in a `_resolved_selection()` method called from `to_sql`/`to_sql_params()` (and by
+  `sql_service.py`, which used to read the terminal's already-resolved `_selection` field directly and
+  now calls `query._resolved_selection()` instead) — so calling `.where()` before `.select_computed()`
+  no longer changes what an unset selection defaults to.
 
 ## Other load-bearing design decisions
 
@@ -120,14 +147,15 @@ one's argument type anyway. This is why:
   ... case _: raise ValueError()` — a closed set that doesn't include `Computed`. Only the *read* side
   (`get`/`get_unsafe`, genuinely-abstract "implemented per-subtype" hooks) works for `Computed`, which
   is fine since setting/mutating a computed aggregate value isn't meaningful anyway.
-- **Computed columns required doubling every builder/terminal class** (8 new classes:
-  `SelectQueryComputed`/`ComputedQuery1`, `JoinQuery2Computed`/`ComputedQuery2`, `JoinQuery3Computed`/
-  `ComputedQuery3`, `JoinQuery4Computed`/`ComputedQuery4`) because the result type `R` can't
-  conditionally vary based on runtime state — it's fixed at class-definition time (`class Query1(...,
-  SqlQuery[PartialModel[TC]])` literally hardcodes `R`). `select_computed`/`select_computed_more` are
-  available on *both* builders and terminals (not terminal-only, which was tried and explicitly
-  rejected) since computed columns need to be referenceable from constraints eventually (HAVING now
-  fulfills that).
+- **Computed columns require a separate class per arity** (`ComputedQuery1..4` alongside `Query1..4`)
+  because the result type `R` can't conditionally vary based on runtime state — it's fixed at
+  class-definition time (`class Query1(..., SqlQuery[PartialModel[TC]])` literally hardcodes `R`).
+  This used to mean 8 *extra* classes on top of the builder/terminal split (`SelectQueryComputed`/
+  `ComputedQuery1`, `JoinQuery2Computed`/`ComputedQuery2`, ...); now that the builder/terminal split is
+  gone, it's just the 4 `ComputedQueryN` classes alongside the 4 `QueryN` ones — 8 total, not 16.
+  `select_computed`/`select_computed_more` are available at every stage (not terminal-only, which was
+  tried and explicitly rejected) since computed columns need to be referenceable from constraints
+  (HAVING).
 - **Default aliasing for `Computed`**: `SqlQuery.sum/avg/min/max/count_col` default their alias to
   `table_column_function` (e.g. `worker_age_sum`), deliberately including the function name — two
   aggregates over the same column (`SUM` and `AVG` of `worker.age`) would otherwise collide on both
@@ -143,8 +171,9 @@ one's argument type anyway. This is why:
   `select_computed`, which requires at least one — there's nothing sensible to compute with zero
   aggregates); the "append" method has a `_more` suffix (`order_by_more`, `group_by_more`,
   `select_computed_more`) and requires at least one argument.
-- **`having_and`/`having_or`**: AND/OR-compose with the existing `_having` if set, else just set it —
-  avoids the caller having to check `if self._having is None` themselves.
+- **`having_and`/`having_or`** (and now `where_and`/`where_or`, added alongside them): AND/OR-compose
+  with the existing `_having`/`_where` if set, else just set it — avoids the caller having to check
+  `if self._having is None`/`if self._where is None` themselves.
 
 ## Chronological feature log (for orientation, not a full changelog — see `git log` for that)
 
@@ -166,6 +195,13 @@ one's argument type anyway. This is why:
 7. **HAVING** (`sql_having.py`, `having`/`having_and`/`having_or`) — established that `HavingConstraint`
    needs `Constraint`'s arity-ladder pattern instead (a HAVING clause can span multiple tables), which
    in turn surfaced the `join_inner`-after-`having()` restriction.
+8. **`Constraint.incr_arity()`/`HavingConstraint.incr_arity()`** (arities 1→2, 2→3, 3→4) — rewraps a
+   constraint's operands into the next arity's class. Removed the structural reason the
+   builder/terminal split existed.
+9. **Collapsed the builder/terminal split, added `where_and`/`where_or`** — `QueryN`/`ComputedQueryN`
+   now carry `_where`/`_having` across `join_inner`/`join_left` via `incr_arity()` instead of requiring
+   them unset; one class per arity instead of two. See "The two arity strategies" above for the
+   corrected picture and the one real behavior change (lazy selection resolution).
 
 ## Known gaps / explicitly flagged, not fixed
 
@@ -174,16 +210,9 @@ one's argument type anyway. This is why:
   `float`. Observed directly in a live-Postgres check, not theoretical. Flagged to the user, not fixed
   — fixing it would mean either changing the declared type (losing precision info) or coercing at the
   response layer (extra runtime cost/complexity for a fairly narrow case). No decision made yet.
-- **The builder/terminal split itself is slated for reconsideration.** The user's own words, most
-  recent turn before this doc: *"We'll update `where` to work the same way [`having`/`having_and`/
-  `having_or`] next -- I have an idea about it."* That idea has **not been discussed yet** — don't
-  assume any particular direction (e.g. don't assume it means "make `Constraint` qualify-externally
-  like `OrderBy`," which was *my* speculation during the HAVING discussion about what *could* remove
-  the split, not the user's actual plan). Ask them what they have in mind before implementing anything
-  here.
-- HAVING's `assert self._having is None` restriction on joining (see above) is a direct consequence of
-  not yet having solved the arity-ladder-carries-across-joins problem in general. If the `where`
-  redesign solves it, the same fix likely applies to `having` too — worth revisiting together.
+- ~~The builder/terminal split itself is slated for reconsideration~~ — **done**: see "The two arity
+  strategies" and chronological log items 8-9 above. `incr_arity()` was the mechanism; the split is
+  gone.
 
 ## Working conventions established this session (not just for this codebase, general preferences)
 

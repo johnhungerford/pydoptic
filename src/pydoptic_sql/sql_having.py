@@ -53,6 +53,9 @@ class HavingConstraint(Generic[TC]):
     def to_sql_params(self) -> Tuple[str, List[Any]]:
         raise NotImplementedError()
 
+    def incr_arity(self) -> 'HavingConstraint2[TC, TC1]':
+        raise NotImplementedError()
+
     @classmethod
     def any(cls, *constraints: 'HavingConstraint[TC]') -> 'HavingOrConstraint[TC]':
         return HavingOrConstraint(list(constraints))
@@ -120,6 +123,9 @@ class HavingOrConstraint(HavingConstraint[TC]):
         params = [p for _, params in parts_params for p in params]
         return sql, params
 
+    def incr_arity(self) -> 'HavingOrConstraint2[TC, TC1]':
+        return HavingOrConstraint2([c.incr_arity() for c in self.constraints])
+
 @dataclass(frozen=True)
 class HavingAndConstraint(HavingConstraint[TC]):
     constraints: List[HavingConstraint[TC]]
@@ -133,6 +139,9 @@ class HavingAndConstraint(HavingConstraint[TC]):
         params = [p for _, params in parts_params for p in params]
         return sql, params
 
+    def incr_arity(self) -> 'HavingAndConstraint2[TC, TC1]':
+        return HavingAndConstraint2([c.incr_arity() for c in self.constraints])
+
 @dataclass(frozen=True)
 class HavingNotConstraint(HavingConstraint[TC]):
     constraint: HavingConstraint[TC]
@@ -143,6 +152,9 @@ class HavingNotConstraint(HavingConstraint[TC]):
     def to_sql_params(self) -> Tuple[str, List[Any]]:
         sql, params = self.constraint.to_sql_params()
         return 'NOT (' + sql + ')', params
+
+    def incr_arity(self) -> 'HavingNotConstraint2[TC, TC1]':
+        return HavingNotConstraint2(self.constraint.incr_arity())
 
 @dataclass(frozen=True)
 class HavingCompConstraint(Generic[TC, A], HavingConstraint[TC]):
@@ -157,6 +169,9 @@ class HavingCompConstraint(Generic[TC, A], HavingConstraint[TC]):
     def to_sql_params(self) -> Tuple[str, List[Any]]:
         value_2, params = _render_having_value(self.value_2, qualify=False)
         return _having_ref_sql(self.value_1, qualify=False) + ' ' + _comparison_symbol(self.comp) + ' ' + value_2, params
+
+    def incr_arity(self) -> 'HavingCompConstraint2[TC, TC1, A]':
+        return HavingCompConstraint2(self.value_1, self.value_2, self.comp)
 
 @dataclass(frozen=True)
 class HavingBetweenConstraint(Generic[TC, A], HavingConstraint[TC]):
@@ -175,6 +190,9 @@ class HavingBetweenConstraint(Generic[TC, A], HavingConstraint[TC]):
         upper, upper_params = _render_having_value(self.upper, qualify=False)
         return f'{_having_ref_sql(self.value, qualify=False)} BETWEEN {lower} AND {upper}', lower_params + upper_params
 
+    def incr_arity(self) -> 'HavingBetweenConstraint2[TC, TC1, A]':
+        return HavingBetweenConstraint2(self.value, self.lower, self.upper)
+
 @dataclass(frozen=True)
 class HavingInConstraint(Generic[TC, A], HavingConstraint[TC]):
     value: Prop[TC, A] | PropOpt[TC, A] | Computed[TC, A]
@@ -191,6 +209,9 @@ class HavingInConstraint(Generic[TC, A], HavingConstraint[TC]):
         params = [p for _, params in rendered for p in params]
         return sql, params
 
+    def incr_arity(self) -> 'HavingInConstraint2[TC, TC1, A]':
+        return HavingInConstraint2(self.value, self.values)
+
 
 # --- arity 2: HAVING constraints over a pair of joined tables ---
 # Column/computed references always render table-qualified, since an operand here may reference
@@ -201,6 +222,9 @@ class HavingConstraint2(Generic[TC, TC1]):
         raise NotImplementedError()
 
     def to_sql_params(self) -> Tuple[str, List[Any]]:
+        raise NotImplementedError()
+
+    def incr_arity(self) -> 'HavingConstraint3[TC, TC1, TC2]':
         raise NotImplementedError()
 
     @classmethod
@@ -279,6 +303,9 @@ class HavingOrConstraint2(HavingConstraint2[TC, TC1]):
         params = [p for _, params in parts_params for p in params]
         return sql, params
 
+    def incr_arity(self) -> 'HavingOrConstraint3[TC, TC1, TC2]':
+        return HavingOrConstraint3([c.incr_arity() for c in self.constraints])
+
 @dataclass(frozen=True)
 class HavingAndConstraint2(HavingConstraint2[TC, TC1]):
     constraints: List[HavingConstraint2[TC, TC1]]
@@ -292,6 +319,9 @@ class HavingAndConstraint2(HavingConstraint2[TC, TC1]):
         params = [p for _, params in parts_params for p in params]
         return sql, params
 
+    def incr_arity(self) -> 'HavingAndConstraint3[TC, TC1, TC2]':
+        return HavingAndConstraint3([c.incr_arity() for c in self.constraints])
+
 @dataclass(frozen=True)
 class HavingNotConstraint2(HavingConstraint2[TC, TC1]):
     constraint: HavingConstraint2[TC, TC1]
@@ -302,6 +332,9 @@ class HavingNotConstraint2(HavingConstraint2[TC, TC1]):
     def to_sql_params(self) -> Tuple[str, List[Any]]:
         sql, params = self.constraint.to_sql_params()
         return 'NOT (' + sql + ')', params
+
+    def incr_arity(self) -> 'HavingNotConstraint3[TC, TC1, TC2]':
+        return HavingNotConstraint3(self.constraint.incr_arity())
 
 @dataclass(frozen=True)
 class HavingCompConstraint2(Generic[TC, TC1, A], HavingConstraint2[TC, TC1]):
@@ -316,6 +349,9 @@ class HavingCompConstraint2(Generic[TC, TC1, A], HavingConstraint2[TC, TC1]):
     def to_sql_params(self) -> Tuple[str, List[Any]]:
         value_2, params = _render_having_value(self.value_2, qualify=True)
         return _having_ref_sql(self.value_1, qualify=True) + ' ' + _comparison_symbol(self.comp) + ' ' + value_2, params
+
+    def incr_arity(self) -> 'HavingCompConstraint3[TC, TC1, TC2, A]':
+        return HavingCompConstraint3(self.value_1, self.value_2, self.comp)
 
 @dataclass(frozen=True)
 class HavingBetweenConstraint2(Generic[TC, TC1, A], HavingConstraint2[TC, TC1]):
@@ -334,6 +370,9 @@ class HavingBetweenConstraint2(Generic[TC, TC1, A], HavingConstraint2[TC, TC1]):
         upper, upper_params = _render_having_value(self.upper, qualify=True)
         return f'{_having_ref_sql(self.value, qualify=True)} BETWEEN {lower} AND {upper}', lower_params + upper_params
 
+    def incr_arity(self) -> 'HavingBetweenConstraint3[TC, TC1, TC2, A]':
+        return HavingBetweenConstraint3(self.value, self.lower, self.upper)
+
 @dataclass(frozen=True)
 class HavingInConstraint2(Generic[TC, TC1, A], HavingConstraint2[TC, TC1]):
     value: Prop[TC, A] | PropOpt[TC, A] | Computed[TC, A] | Prop[TC1, A] | PropOpt[TC1, A] | Computed[TC1, A]
@@ -350,6 +389,9 @@ class HavingInConstraint2(Generic[TC, TC1, A], HavingConstraint2[TC, TC1]):
         params = [p for _, params in rendered for p in params]
         return sql, params
 
+    def incr_arity(self) -> 'HavingInConstraint3[TC, TC1, TC2, A]':
+        return HavingInConstraint3(self.value, self.values)
+
 
 # --- arity 3: HAVING constraints over 3 joined tables ---
 
@@ -358,6 +400,9 @@ class HavingConstraint3(Generic[TC, TC1, TC2]):
         raise NotImplementedError()
 
     def to_sql_params(self) -> Tuple[str, List[Any]]:
+        raise NotImplementedError()
+
+    def incr_arity(self) -> 'HavingConstraint4[TC, TC1, TC2, TC3]':
         raise NotImplementedError()
 
     @classmethod
@@ -436,6 +481,9 @@ class HavingOrConstraint3(HavingConstraint3[TC, TC1, TC2]):
         params = [p for _, params in parts_params for p in params]
         return sql, params
 
+    def incr_arity(self) -> 'HavingOrConstraint4[TC, TC1, TC2, TC3]':
+        return HavingOrConstraint4([c.incr_arity() for c in self.constraints])
+
 @dataclass(frozen=True)
 class HavingAndConstraint3(HavingConstraint3[TC, TC1, TC2]):
     constraints: List[HavingConstraint3[TC, TC1, TC2]]
@@ -449,6 +497,9 @@ class HavingAndConstraint3(HavingConstraint3[TC, TC1, TC2]):
         params = [p for _, params in parts_params for p in params]
         return sql, params
 
+    def incr_arity(self) -> 'HavingAndConstraint4[TC, TC1, TC2, TC3]':
+        return HavingAndConstraint4([c.incr_arity() for c in self.constraints])
+
 @dataclass(frozen=True)
 class HavingNotConstraint3(HavingConstraint3[TC, TC1, TC2]):
     constraint: HavingConstraint3[TC, TC1, TC2]
@@ -459,6 +510,9 @@ class HavingNotConstraint3(HavingConstraint3[TC, TC1, TC2]):
     def to_sql_params(self) -> Tuple[str, List[Any]]:
         sql, params = self.constraint.to_sql_params()
         return 'NOT (' + sql + ')', params
+
+    def incr_arity(self) -> 'HavingNotConstraint4[TC, TC1, TC2, TC3]':
+        return HavingNotConstraint4(self.constraint.incr_arity())
 
 @dataclass(frozen=True)
 class HavingCompConstraint3(Generic[TC, TC1, TC2, A], HavingConstraint3[TC, TC1, TC2]):
@@ -473,6 +527,9 @@ class HavingCompConstraint3(Generic[TC, TC1, TC2, A], HavingConstraint3[TC, TC1,
     def to_sql_params(self) -> Tuple[str, List[Any]]:
         value_2, params = _render_having_value(self.value_2, qualify=True)
         return _having_ref_sql(self.value_1, qualify=True) + ' ' + _comparison_symbol(self.comp) + ' ' + value_2, params
+
+    def incr_arity(self) -> 'HavingCompConstraint4[TC, TC1, TC2, TC3, A]':
+        return HavingCompConstraint4(self.value_1, self.value_2, self.comp)
 
 @dataclass(frozen=True)
 class HavingBetweenConstraint3(Generic[TC, TC1, TC2, A], HavingConstraint3[TC, TC1, TC2]):
@@ -491,6 +548,9 @@ class HavingBetweenConstraint3(Generic[TC, TC1, TC2, A], HavingConstraint3[TC, T
         upper, upper_params = _render_having_value(self.upper, qualify=True)
         return f'{_having_ref_sql(self.value, qualify=True)} BETWEEN {lower} AND {upper}', lower_params + upper_params
 
+    def incr_arity(self) -> 'HavingBetweenConstraint4[TC, TC1, TC2, TC3, A]':
+        return HavingBetweenConstraint4(self.value, self.lower, self.upper)
+
 @dataclass(frozen=True)
 class HavingInConstraint3(Generic[TC, TC1, TC2, A], HavingConstraint3[TC, TC1, TC2]):
     value: Prop[TC, A] | PropOpt[TC, A] | Computed[TC, A] | Prop[TC1, A] | PropOpt[TC1, A] | Computed[TC1, A] | Prop[TC2, A] | PropOpt[TC2, A] | Computed[TC2, A]
@@ -506,6 +566,9 @@ class HavingInConstraint3(Generic[TC, TC1, TC2, A], HavingConstraint3[TC, TC1, T
         sql = f'{_having_ref_sql(self.value, qualify=True)} IN ({", ".join(part for part, _ in rendered)})'
         params = [p for _, params in rendered for p in params]
         return sql, params
+
+    def incr_arity(self) -> 'HavingInConstraint4[TC, TC1, TC2, TC3, A]':
+        return HavingInConstraint4(self.value, self.values)
 
 
 # --- arity 4: HAVING constraints over 4 joined tables ---

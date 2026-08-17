@@ -305,23 +305,23 @@ class PsycoPgSqlTransaction(SqlTransaction):
         self.cursor.execute(sql, params)
         match query:
             case ComputedQuery1():
-                return cast(SqlResponse[R], PsycoPgComputedResponse1(query.table1, self.cursor, query._selection, query._computed))
+                return cast(SqlResponse[R], PsycoPgComputedResponse1(query.table1, self.cursor, query._resolved_selection(), query._computed))
             case ComputedQuery2():
-                return cast(SqlResponse[R], PsycoPgComputedResponse2(query.table1, query.table2, self.cursor, query._selection, query._computed))
+                return cast(SqlResponse[R], PsycoPgComputedResponse2(query.table1, query.table2, self.cursor, query._resolved_selection(), query._computed))
             case ComputedQuery3():
-                return cast(SqlResponse[R], PsycoPgComputedResponse3(query.table1, query.table2, query.table3, self.cursor, query._selection, query._computed))
+                return cast(SqlResponse[R], PsycoPgComputedResponse3(query.table1, query.table2, query.table3, self.cursor, query._resolved_selection(), query._computed))
             case ComputedQuery4():
-                return cast(SqlResponse[R], PsycoPgComputedResponse4(query.table1, query.table2, query.table3, query.table4, self.cursor, query._selection, query._computed))
+                return cast(SqlResponse[R], PsycoPgComputedResponse4(query.table1, query.table2, query.table3, query.table4, self.cursor, query._resolved_selection(), query._computed))
             case Query1():
                 # Query1[TC]'s R is always PartialModel[TC], which is exactly the caller's R here,
                 # but match narrowing can't invert R back to TC to prove that statically.
-                return cast(SqlResponse[R], PsycoPgSqlResponse(query.table1, self.cursor, query._selection))
+                return cast(SqlResponse[R], PsycoPgSqlResponse(query.table1, self.cursor, query._resolved_selection()))
             case Query2():
-                return cast(SqlResponse[R], PsycoPgJoinResponse2(query.table1, query.table2, self.cursor, query._selection))
+                return cast(SqlResponse[R], PsycoPgJoinResponse2(query.table1, query.table2, self.cursor, query._resolved_selection()))
             case Query3():
-                return cast(SqlResponse[R], PsycoPgJoinResponse3(query.table1, query.table2, query.table3, self.cursor, query._selection))
+                return cast(SqlResponse[R], PsycoPgJoinResponse3(query.table1, query.table2, query.table3, self.cursor, query._resolved_selection()))
             case Query4():
-                return cast(SqlResponse[R], PsycoPgJoinResponse4(query.table1, query.table2, query.table3, query.table4, self.cursor, query._selection))
+                return cast(SqlResponse[R], PsycoPgJoinResponse4(query.table1, query.table2, query.table3, query.table4, self.cursor, query._resolved_selection()))
             case _:
                 return EmptyPgSqlResponse()
 

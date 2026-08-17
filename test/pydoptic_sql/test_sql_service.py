@@ -238,6 +238,83 @@ def test_join_query2_inner():
                 except:
                     ...
 
+def test_where_set_before_join_widens_and_filters_correctly():
+    # where() set on a single-table query, before join_inner() widens it to Constraint2 via
+    # incr_arity() -- verifies the widened constraint actually filters correctly against real rows,
+    # not just that it renders the expected SQL text.
+    with psycopg.connect(_DB_DSN) as conn:
+        pg_client = PsycoPgSqlClient(conn)
+
+        try:
+            with pg_client.open() as tx:
+                tx.execute(SqlQuery.create(Department))
+                tx.execute(SqlQuery.create(Worker))
+
+                tx.execute(SqlQuery.insert(Department.construct(
+                    Department.id.param(1), Department.name.param('Engineering'), Department.min_age.param(21),
+                )))
+                tx.execute(SqlQuery.insert(Worker.construct(
+                    Worker.id.param(1), Worker.name.param('Alice'), Worker.department_id.param(1), Worker.age.param(30),
+                )))
+                tx.execute(SqlQuery.insert(Worker.construct(
+                    Worker.id.param(2), Worker.name.param('Bob'), Worker.department_id.param(1), Worker.age.param(17),
+                )))
+
+                res = tx.execute(
+                    SqlQuery.from_table(Worker).where(Constraint.gte(Worker.age, 18)).join_inner(
+                        Department, Constraint2.eq(Worker.department_id, Department.id),
+                    ).select(Worker.name)
+                )
+
+                names = [Worker.name.get_val_safe(worker) for worker, _ in res.stream()]
+                assert names == ['Alice']
+        finally:
+            with pg_client.open() as tx:
+                try:
+                    tx.execute(SqlQuery.drop(Worker))
+                    tx.execute(SqlQuery.drop(Department))
+                    tx.commit()
+                except:
+                    ...
+
+def test_join_query2_where_and_filters_correctly():
+    with psycopg.connect(_DB_DSN) as conn:
+        pg_client = PsycoPgSqlClient(conn)
+
+        try:
+            with pg_client.open() as tx:
+                tx.execute(SqlQuery.create(Department))
+                tx.execute(SqlQuery.create(Worker))
+
+                tx.execute(SqlQuery.insert(Department.construct(
+                    Department.id.param(1), Department.name.param('Engineering'), Department.min_age.param(21),
+                )))
+                tx.execute(SqlQuery.insert(Worker.construct(
+                    Worker.id.param(1), Worker.name.param('Alice'), Worker.department_id.param(1), Worker.age.param(30),
+                )))
+                tx.execute(SqlQuery.insert(Worker.construct(
+                    Worker.id.param(2), Worker.name.param('Bob'), Worker.department_id.param(1), Worker.age.param(17),
+                )))
+
+                res = tx.execute(
+                    SqlQuery.from_table(Worker).join_inner(
+                        Department, Constraint2.eq(Worker.department_id, Department.id),
+                    ).select(Worker.name).where(
+                        Constraint2.eq(Worker.department_id, 1),
+                    ).where_and(Constraint2.gte(Worker.age, 18))
+                )
+
+                names = [Worker.name.get_val_safe(worker) for worker, _ in res.stream()]
+                assert names == ['Alice']
+        finally:
+            with pg_client.open() as tx:
+                try:
+                    tx.execute(SqlQuery.drop(Worker))
+                    tx.execute(SqlQuery.drop(Department))
+                    tx.commit()
+                except:
+                    ...
+
 def test_join_query2_order_by():
     with psycopg.connect(_DB_DSN) as conn:
         pg_client = PsycoPgSqlClient(conn)
