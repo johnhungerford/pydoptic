@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "pydoptic"
-version = "0.0.1"
+dynamic = ["version"]
 authors = [{ name = "John Hungerford" }]
 urls = { Source = "https://github.com/johnhungerford/pydoptic" }
 description = "Model data using reified optics"
@@ -29,6 +29,14 @@ types = [
 benchmark = [
     "pydantic~=2.11",
 ]
+
+[tool.setuptools_scm]
+# Version is derived entirely from git tags (v1.2.3 -> 1.2.3) -- no version field to hand-edit or
+# forget to bump. `no-guess-dev` avoids speculatively bumping the next version between tags (just
+# appends `.devN`); `no-local-version` drops the `+g<sha>` local segment, since PyPI/TestPyPI reject
+# any version containing one.
+version_scheme = "no-guess-dev"
+local_scheme = "no-local-version"
 
 [tool.pytest.ini_options]
 markers = [
