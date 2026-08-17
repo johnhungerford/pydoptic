@@ -1,4 +1,4 @@
-from pydoptic_sql import SqlTable, ColumnType, PrimaryKey, column, SqlQuery, Constraint, Constraint2, Constraint3, Constraint4, Direction
+from pydoptic_sql import SqlTable, ColumnType, PrimaryKey, column, SqlQuery, Constraint, Constraint2, Constraint3, Constraint4, Direction, HavingConstraint, HavingConstraint2
 from pydoptic import Prop, PropOpt
 import psycopg
 
@@ -484,6 +484,88 @@ def test_select_computed_join_with_group_by():
                 rows = list(res.stream())
                 out = [(Department.name.get_val_safe(dept), worker_count.get_val_safe(cr)) for _, dept, cr in rows]
                 assert out == [('Engineering', 2), ('Sales', 1)]
+        finally:
+            with pg_client.open() as tx:
+                try:
+                    tx.execute(SqlQuery.drop(Worker))
+                    tx.execute(SqlQuery.drop(Department))
+                    tx.commit()
+                except:
+                    ...
+
+
+# --- HAVING (filtering on computed columns) ---
+
+def test_having_filters_groups_by_aggregate_single_table():
+    with psycopg.connect(_DB_DSN) as conn:
+        pg_client = PsycoPgSqlClient(conn)
+
+        try:
+            with pg_client.open() as tx:
+                tx.execute(SqlQuery.create(Worker))
+
+                # department 1: 2 workers (passes HAVING count >= 2); department 2: 1 worker (fails)
+                for id_, name, dept, age in [(1, 'Alice', 1, 30), (2, 'Bob', 1, 25), (3, 'Carol', 2, 40)]:
+                    tx.execute(SqlQuery.insert(Worker.construct(
+                        Worker.id.param(id_), Worker.name.param(name), Worker.department_id.param(dept), Worker.age.param(age),
+                    )))
+
+                worker_count = SqlQuery.count(Worker)
+                res = tx.execute(
+                    SqlQuery.from_table(Worker)
+                    .select(Worker.department_id)
+                    .group_by(Worker.department_id)
+                    .select_computed(worker_count)
+                    .having(HavingConstraint.gte(worker_count, 2))
+                    .where()
+                )
+
+                rows = list(res.stream())
+                out = [(Worker.department_id.get_val_safe(pm), worker_count.get_val_safe(cr)) for pm, cr in rows]
+                assert out == [(1, 2)]
+        finally:
+            with pg_client.open() as tx:
+                try:
+                    tx.execute(SqlQuery.drop(Worker))
+                    tx.commit()
+                except:
+                    ...
+
+def test_having_filters_groups_by_aggregate_joined():
+    with psycopg.connect(_DB_DSN) as conn:
+        pg_client = PsycoPgSqlClient(conn)
+
+        try:
+            with pg_client.open() as tx:
+                tx.execute(SqlQuery.create(Department))
+                tx.execute(SqlQuery.create(Worker))
+
+                tx.execute(SqlQuery.insert(Department.construct(
+                    Department.id.param(1), Department.name.param('Engineering'), Department.min_age.param(21),
+                )))
+                tx.execute(SqlQuery.insert(Department.construct(
+                    Department.id.param(2), Department.name.param('Sales'), Department.min_age.param(18),
+                )))
+                # Engineering: total age 55 (passes HAVING > 50); Sales: total age 40 (fails)
+                for id_, name, dept, age in [(1, 'Alice', 1, 30), (2, 'Bob', 1, 25), (3, 'Carol', 2, 40)]:
+                    tx.execute(SqlQuery.insert(Worker.construct(
+                        Worker.id.param(id_), Worker.name.param(name), Worker.department_id.param(dept), Worker.age.param(age),
+                    )))
+
+                total_age = SqlQuery.sum(Worker.age)
+                res = tx.execute(
+                    SqlQuery.from_table(Worker)
+                    .join_inner(Department, Constraint2.eq(Worker.department_id, Department.id))
+                    .select(Department.name)
+                    .group_by(Department.name)
+                    .select_computed(total_age)
+                    .having(HavingConstraint2.gt(total_age, 50))
+                    .where()
+                )
+
+                rows = list(res.stream())
+                out = [(Department.name.get_val_safe(dept), total_age.get_val_safe(cr)) for _, dept, cr in rows]
+                assert out == [('Engineering', 55)]
         finally:
             with pg_client.open() as tx:
                 try:
