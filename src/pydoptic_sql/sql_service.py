@@ -7,7 +7,8 @@ from typing import Any, Dict, Generic, Iterator, List, Sequence, Tuple, Type, ca
 from pydoptic.base_model import PartialModel
 from pydoptic.selector import PropSelect
 from pydoptic_sql import SqlQuery
-from pydoptic_sql.sql_query import TC, TC1, TC2, TC3, R, Query1, Query2, Query3, Query4
+from pydoptic_sql.sql_computed import Computed, ComputedResult
+from pydoptic_sql.sql_query import TC, TC1, TC2, TC3, R, Query1, Query2, Query3, Query4, ComputedQuery1, ComputedQuery2, ComputedQuery3, ComputedQuery4
 
 from psycopg import Connection, Cursor
 
@@ -45,6 +46,12 @@ class EmptyPgSqlResponse(SqlResponse[R]):
         seq: Sequence[R] = []
         return iter(seq)
 
+def _computed_record(computed: Sequence[Computed[Any, Any]], sql_record: Tuple[Any, ...], offset: int) -> ComputedResult:
+    """Build a ComputedResult from the trailing `len(computed)` columns of a row, keyed by each
+    Computed's alias -- the computed columns always come after the plain ones, in the same order
+    the query builder put them in (see _computed_sql_parts in sql_query.py)."""
+    return ComputedResult(**{c.label: sql_record[offset + i] for i, c in enumerate(computed)})
+
 @dataclass
 class PsycoPgSqlResponse(Generic[TC], SqlResponse[PartialModel[TC]]):
     model: Type[TC]
@@ -64,6 +71,29 @@ class PsycoPgSqlResponse(Generic[TC], SqlResponse[PartialModel[TC]]):
         return None
 
     def stream(self) -> Iterator[PartialModel[TC]]:
+        for row in self.cursor:
+            yield self.__make_record(row)
+
+@dataclass
+class PsycoPgComputedResponse1(Generic[TC], SqlResponse[Tuple[PartialModel[TC], ComputedResult]]):
+    model: Type[TC]
+    cursor: Cursor
+    selection: Sequence[PropSelect[TC, Any]]
+    computed: Sequence[Computed[TC, Any]]
+
+    def __make_record(self, sql_record: Tuple[Any, ...]) -> Tuple[PartialModel[TC], ComputedResult]:
+        data: Dict[str, Any] = {}
+        for i, prop in enumerate(self.selection):
+            data[prop.label] = sql_record[i]
+        return PartialModel(self.model, **data), _computed_record(self.computed, sql_record, len(self.selection))
+
+    def fetchone(self) -> Tuple[PartialModel[TC], ComputedResult] | None:
+        result = self.cursor.fetchone()
+        if result is not None:
+            return self.__make_record(result)
+        return None
+
+    def stream(self) -> Iterator[Tuple[PartialModel[TC], ComputedResult]]:
         for row in self.cursor:
             yield self.__make_record(row)
 
@@ -95,6 +125,34 @@ class PsycoPgJoinResponse2(Generic[TC, TC1], SqlResponse[Tuple[PartialModel[TC],
             yield self.__make_record(row)
 
 @dataclass
+class PsycoPgComputedResponse2(Generic[TC, TC1], SqlResponse[Tuple[PartialModel[TC], PartialModel[TC1], ComputedResult]]):
+    table1: Type[TC]
+    table2: Type[TC1]
+    cursor: Cursor
+    selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any]]
+    computed: Sequence[Computed[TC, Any] | Computed[TC1, Any]]
+
+    def __make_record(self, sql_record: Tuple[Any, ...]) -> Tuple[PartialModel[TC], PartialModel[TC1], ComputedResult]:
+        data1: Dict[str, Any] = {}
+        data2: Dict[str, Any] = {}
+        for i, prop in enumerate(self.selection):
+            if prop.origin is self.table1:
+                data1[prop.label] = sql_record[i]
+            else:
+                data2[prop.label] = sql_record[i]
+        return PartialModel(self.table1, **data1), PartialModel(self.table2, **data2), _computed_record(self.computed, sql_record, len(self.selection))
+
+    def fetchone(self) -> Tuple[PartialModel[TC], PartialModel[TC1], ComputedResult] | None:
+        result = self.cursor.fetchone()
+        if result is not None:
+            return self.__make_record(result)
+        return None
+
+    def stream(self) -> Iterator[Tuple[PartialModel[TC], PartialModel[TC1], ComputedResult]]:
+        for row in self.cursor:
+            yield self.__make_record(row)
+
+@dataclass
 class PsycoPgJoinResponse3(Generic[TC, TC1, TC2], SqlResponse[Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2]]]):
     table1: Type[TC]
     table2: Type[TC1]
@@ -122,6 +180,38 @@ class PsycoPgJoinResponse3(Generic[TC, TC1, TC2], SqlResponse[Tuple[PartialModel
         return None
 
     def stream(self) -> Iterator[Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2]]]:
+        for row in self.cursor:
+            yield self.__make_record(row)
+
+@dataclass
+class PsycoPgComputedResponse3(Generic[TC, TC1, TC2], SqlResponse[Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2], ComputedResult]]):
+    table1: Type[TC]
+    table2: Type[TC1]
+    table3: Type[TC2]
+    cursor: Cursor
+    selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]]
+    computed: Sequence[Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any]]
+
+    def __make_record(self, sql_record: Tuple[Any, ...]) -> Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2], ComputedResult]:
+        data1: Dict[str, Any] = {}
+        data2: Dict[str, Any] = {}
+        data3: Dict[str, Any] = {}
+        for i, prop in enumerate(self.selection):
+            if prop.origin is self.table1:
+                data1[prop.label] = sql_record[i]
+            elif prop.origin is self.table2:
+                data2[prop.label] = sql_record[i]
+            else:
+                data3[prop.label] = sql_record[i]
+        return PartialModel(self.table1, **data1), PartialModel(self.table2, **data2), PartialModel(self.table3, **data3), _computed_record(self.computed, sql_record, len(self.selection))
+
+    def fetchone(self) -> Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2], ComputedResult] | None:
+        result = self.cursor.fetchone()
+        if result is not None:
+            return self.__make_record(result)
+        return None
+
+    def stream(self) -> Iterator[Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2], ComputedResult]]:
         for row in self.cursor:
             yield self.__make_record(row)
 
@@ -161,6 +251,42 @@ class PsycoPgJoinResponse4(Generic[TC, TC1, TC2, TC3], SqlResponse[Tuple[Partial
             yield self.__make_record(row)
 
 @dataclass
+class PsycoPgComputedResponse4(Generic[TC, TC1, TC2, TC3], SqlResponse[Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2], PartialModel[TC3], ComputedResult]]):
+    table1: Type[TC]
+    table2: Type[TC1]
+    table3: Type[TC2]
+    table4: Type[TC3]
+    cursor: Cursor
+    selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]]
+    computed: Sequence[Computed[TC, Any] | Computed[TC1, Any] | Computed[TC2, Any] | Computed[TC3, Any]]
+
+    def __make_record(self, sql_record: Tuple[Any, ...]) -> Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2], PartialModel[TC3], ComputedResult]:
+        data1: Dict[str, Any] = {}
+        data2: Dict[str, Any] = {}
+        data3: Dict[str, Any] = {}
+        data4: Dict[str, Any] = {}
+        for i, prop in enumerate(self.selection):
+            if prop.origin is self.table1:
+                data1[prop.label] = sql_record[i]
+            elif prop.origin is self.table2:
+                data2[prop.label] = sql_record[i]
+            elif prop.origin is self.table3:
+                data3[prop.label] = sql_record[i]
+            else:
+                data4[prop.label] = sql_record[i]
+        return PartialModel(self.table1, **data1), PartialModel(self.table2, **data2), PartialModel(self.table3, **data3), PartialModel(self.table4, **data4), _computed_record(self.computed, sql_record, len(self.selection))
+
+    def fetchone(self) -> Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2], PartialModel[TC3], ComputedResult] | None:
+        result = self.cursor.fetchone()
+        if result is not None:
+            return self.__make_record(result)
+        return None
+
+    def stream(self) -> Iterator[Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2], PartialModel[TC3], ComputedResult]]:
+        for row in self.cursor:
+            yield self.__make_record(row)
+
+@dataclass
 class PsycoPgSqlTransaction(SqlTransaction):
     connection: Connection
     cursor: Cursor
@@ -178,6 +304,14 @@ class PsycoPgSqlTransaction(SqlTransaction):
         sql, params = query.to_sql_params()
         self.cursor.execute(sql, params)
         match query:
+            case ComputedQuery1():
+                return cast(SqlResponse[R], PsycoPgComputedResponse1(query.table1, self.cursor, query._selection, query._computed))
+            case ComputedQuery2():
+                return cast(SqlResponse[R], PsycoPgComputedResponse2(query.table1, query.table2, self.cursor, query._selection, query._computed))
+            case ComputedQuery3():
+                return cast(SqlResponse[R], PsycoPgComputedResponse3(query.table1, query.table2, query.table3, self.cursor, query._selection, query._computed))
+            case ComputedQuery4():
+                return cast(SqlResponse[R], PsycoPgComputedResponse4(query.table1, query.table2, query.table3, query.table4, self.cursor, query._selection, query._computed))
             case Query1():
                 # Query1[TC]'s R is always PartialModel[TC], which is exactly the caller's R here,
                 # but match narrowing can't invert R back to TC to prove that statically.

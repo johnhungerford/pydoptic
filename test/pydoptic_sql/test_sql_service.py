@@ -384,3 +384,111 @@ def test_join_query4_triply_nested_join():
                     tx.commit()
                 except:
                     ...
+
+
+# --- COMPUTED (aggregates) ---
+
+def test_select_computed_pure_aggregate():
+    with psycopg.connect(_DB_DSN) as conn:
+        pg_client = PsycoPgSqlClient(conn)
+
+        try:
+            with pg_client.open() as tx:
+                tx.execute(SqlQuery.create(Worker))
+
+                for id_, name, dept, age in [(1, 'Alice', 1, 30), (2, 'Bob', 1, 25), (3, 'Carol', 2, 40)]:
+                    tx.execute(SqlQuery.insert(Worker.construct(
+                        Worker.id.param(id_), Worker.name.param(name), Worker.department_id.param(dept), Worker.age.param(age),
+                    )))
+
+                total_age = SqlQuery.sum(Worker.age)
+                res = tx.execute(SqlQuery.from_table(Worker).select_computed(total_age).where())
+
+                row = res.fetchone()
+                assert row is not None
+                _, computed = row
+                assert total_age.get_val_safe(computed) == 95
+                assert res.fetchone() is None
+        finally:
+            with pg_client.open() as tx:
+                try:
+                    tx.execute(SqlQuery.drop(Worker))
+                    tx.commit()
+                except:
+                    ...
+
+def test_select_computed_with_group_by():
+    with psycopg.connect(_DB_DSN) as conn:
+        pg_client = PsycoPgSqlClient(conn)
+
+        try:
+            with pg_client.open() as tx:
+                tx.execute(SqlQuery.create(Worker))
+
+                for id_, name, dept, age in [(1, 'Alice', 1, 30), (2, 'Bob', 1, 25), (3, 'Carol', 2, 40)]:
+                    tx.execute(SqlQuery.insert(Worker.construct(
+                        Worker.id.param(id_), Worker.name.param(name), Worker.department_id.param(dept), Worker.age.param(age),
+                    )))
+
+                age_sum = SqlQuery.sum(Worker.age)
+                res = tx.execute(
+                    SqlQuery.from_table(Worker)
+                    .select(Worker.department_id)
+                    .group_by(Worker.department_id)
+                    .order_by_more(Worker.department_id)
+                    .select_computed(age_sum)
+                    .where()
+                )
+
+                rows = list(res.stream())
+                assert [(Worker.department_id.get_val_safe(pm), age_sum.get_val_safe(cr)) for pm, cr in rows] == [(1, 55), (2, 40)]
+        finally:
+            with pg_client.open() as tx:
+                try:
+                    tx.execute(SqlQuery.drop(Worker))
+                    tx.commit()
+                except:
+                    ...
+
+def test_select_computed_join_with_group_by():
+    with psycopg.connect(_DB_DSN) as conn:
+        pg_client = PsycoPgSqlClient(conn)
+
+        try:
+            with pg_client.open() as tx:
+                tx.execute(SqlQuery.create(Department))
+                tx.execute(SqlQuery.create(Worker))
+
+                tx.execute(SqlQuery.insert(Department.construct(
+                    Department.id.param(1), Department.name.param('Engineering'), Department.min_age.param(21),
+                )))
+                tx.execute(SqlQuery.insert(Department.construct(
+                    Department.id.param(2), Department.name.param('Sales'), Department.min_age.param(18),
+                )))
+                for id_, name, dept, age in [(1, 'Alice', 1, 30), (2, 'Bob', 1, 25), (3, 'Carol', 2, 40)]:
+                    tx.execute(SqlQuery.insert(Worker.construct(
+                        Worker.id.param(id_), Worker.name.param(name), Worker.department_id.param(dept), Worker.age.param(age),
+                    )))
+
+                worker_count = SqlQuery.count(Worker)
+                res = tx.execute(
+                    SqlQuery.from_table(Worker)
+                    .join_inner(Department, Constraint2.eq(Worker.department_id, Department.id))
+                    .select(Department.name)
+                    .group_by(Department.name)
+                    .order_by_more(Department.name)
+                    .select_computed(worker_count)
+                    .where()
+                )
+
+                rows = list(res.stream())
+                out = [(Department.name.get_val_safe(dept), worker_count.get_val_safe(cr)) for _, dept, cr in rows]
+                assert out == [('Engineering', 2), ('Sales', 1)]
+        finally:
+            with pg_client.open() as tx:
+                try:
+                    tx.execute(SqlQuery.drop(Worker))
+                    tx.execute(SqlQuery.drop(Department))
+                    tx.commit()
+                except:
+                    ...
