@@ -6,9 +6,11 @@ build-backend = "setuptools.build_meta"
 name = "pydoptic"
 version = "0.0.1"
 authors = [{ name = "John Hungerford" }]
-urls = { Source = "https://github.com/johnhungerford/selector-model" }
-description = "Data models based on reified optics"
+urls = { Source = "https://github.com/johnhungerford/pydoptic" }
+description = "Model data using reified optics"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.8,<3.14"
 dependencies = [
     "jsonschema==4.25.1",
