@@ -1295,7 +1295,7 @@ class LinkedSelect(Generic[A, B, C], Select[A, C]):
                 if result is None:
                     raise ValueError(f'Unexpected empty value for attribute {label}')
             return SelectValue(cast(C, result), False, False)
-        return self.select_1.get_unsafe(target).flat_map(lambda b: self.select_2.get_unsafe(b))
+        return self.select_1.get_unsafe(target).flat_map(lambda b: self.select_2.get_unsafe(b)) # type: ignore[arg-type]
 
     def get(self, target: A) -> SelectValue[C]:
         labels = self._simple_chain_labels

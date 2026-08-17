@@ -30,6 +30,7 @@ class SelectProxy(Generic[B]):
         it's replaced in-place by the real `Prop`/`Discrim`, so this only ever runs once per class.
         """
         _resolve_properties(owner)
+        assert self._field_name is not None, 'SelectProxy.__get__ called before __set_name__ resolved the field name'
         return getattr(owner, self._field_name)
 
 def select(name: str | None = None, **data) -> Any:
