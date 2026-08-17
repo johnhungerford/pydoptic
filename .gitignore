@@ -15,7 +15,3 @@ dist/
 esdata
 data
 .DS_Store
-rsdnconfig/*.yml
-!rsdnconfig/dev.yml
-!rsdnconfig/test.yml
-data

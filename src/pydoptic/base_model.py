@@ -193,16 +193,14 @@ class BaseModel(ModelLike, metaclass=BaseModelMeta):
 
     Can include class attribute `validators` to specify how certain types should be validated.
     """
+
+    # Registry of resolved selectors, keyed by model class. Shared across all `BaseModel` subclasses; populated
+    # lazily (see `_resolve_properties`) since resolving a class's selectors requires its forward references to
+    # already be resolvable, which is only guaranteed once its defining module has finished executing.
     _properties: Dict[Type[Any], Dict[str, PropSelect[Any, Any] | Discrim[Any, Any]]] = {}
-    """
-    Registry of resolved selectors, keyed by model class. Shared across all `BaseModel` subclasses; populated
-    lazily (see `_resolve_properties`) since resolving a class's selectors requires its forward references to
-    already be resolvable, which is only guaranteed once its defining module has finished executing.
-    """
+
+    # Table for looking up validation functions by type.
     validators: Dict[Type[Any], Validator]
-    """
-    Table for looking up validation functions by type.
-    """
 
     @classmethod
     def properties(cls) -> Dict[str, PropSelect[Any, Any] | Discrim[Any, Any]]:
