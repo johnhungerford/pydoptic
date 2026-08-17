@@ -27,3 +27,9 @@ types = [
 benchmark = [
     "pydantic~=2.11",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: requires live external services (Postgres, Elasticsearch) started via docker-compose.yml; excluded by default, opt in with `-m integration`",
+]
+addopts = "-m 'not integration'"

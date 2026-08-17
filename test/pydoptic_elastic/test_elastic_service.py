@@ -1,9 +1,12 @@
+import pytest
 from elasticsearch import Elasticsearch
 
 from pydoptic.selector import Prop
 from pydoptic_elastic.elastic_model import ElasticModel
 from pydoptic_elastic.elastic_service import ElasticService
 from pydoptic_elastic.elastic_query import Query
+
+pytestmark = pytest.mark.integration
 
 class SimpleModel(ElasticModel):
     prop_1: Prop['SimpleModel', int]

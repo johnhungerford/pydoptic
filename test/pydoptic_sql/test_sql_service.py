@@ -1,8 +1,12 @@
+import pytest
+
 from pydoptic_sql import SqlTable, ColumnType, PrimaryKey, column, SqlQuery, Constraint, Constraint2, Constraint3, Constraint4, Direction, HavingConstraint, HavingConstraint2
 from pydoptic import Prop, PropOpt
 import psycopg
 
 from pydoptic_sql.sql_service import PsycoPgSqlClient
+
+pytestmark = pytest.mark.integration
 
 _DB_DSN = "host=localhost port=5432 dbname=pydoptic user=postgres password=password"
 
@@ -479,7 +483,7 @@ def test_select_computed_pure_aggregate():
                     )))
 
                 total_age = SqlQuery.sum(Worker.age)
-                res = tx.execute(SqlQuery.from_table(Worker).select_computed(total_age).where())
+                res = tx.execute(SqlQuery.from_table(Worker).select_computed(total_age))
 
                 row = res.fetchone()
                 assert row is not None

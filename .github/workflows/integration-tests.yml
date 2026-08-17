@@ -1,0 +1,57 @@
+name: Integration Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: integration-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      # Mirrors docker-compose.yml's `db` service; connection details match test/pydoptic_sql/test_sql_service.py's _DB_DSN.
+      postgres:
+        image: postgres
+        env:
+          POSTGRES_DB: pydoptic
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      # Mirrors docker-compose.yml's `elastic` service; heap sized down from the compose file's
+      # -Xms2G -Xmx10G to fit a GitHub-hosted runner.
+      elasticsearch:
+        image: elasticsearch:8.14.3
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: 'false'
+          ES_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl --silent --fail localhost:9200/_cluster/health || exit 1"
+          --health-interval 30s
+          --health-timeout 30s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -e .[test]
+
+      - name: Run integration tests
+        run: PYTHONPATH=src python -m pytest test -q -m integration
