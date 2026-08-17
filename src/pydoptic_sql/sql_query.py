@@ -27,7 +27,7 @@ class SqlQuery(Generic[R]):
         raise NotImplementedError()
 
     @classmethod
-    def from_(cls, table: Type[TC]) -> 'SelectQuery[TC]':
+    def from_table(cls, table: Type[TC]) -> 'SelectQuery[TC]':
         return SelectQuery(table)
 
     @classmethod
@@ -82,11 +82,11 @@ class SelectQuery(Generic[TC]):
     def select_more(self, sel: PropSelect[TC, Any], *sels: PropSelect[TC, Any]) -> 'SelectQuery[TC]':
         return SelectQuery(self.table1, [*(self._selection or []), sel, *sels])
 
-    def join_inner(self, next: Type[TC1], *on: Constraint2[TC, TC1]) -> 'JoinQuery2[TC, TC1]':
-        return JoinQuery2(self.table1, next, JoinType.Inner, list(on), self._selection)
+    def join_inner(self, next: Type[TC1], on: Constraint2[TC, TC1] | None = None) -> 'JoinQuery2[TC, TC1]':
+        return JoinQuery2(self.table1, next, JoinType.Inner, on, self._selection)
 
-    def join_left(self, next: Type[TC1], *on: Constraint2[TC, TC1]) -> 'JoinQuery2[TC, TC1]':
-        return JoinQuery2(self.table1, next, JoinType.Left, list(on), self._selection)
+    def join_left(self, next: Type[TC1], on: Constraint2[TC, TC1] | None = None) -> 'JoinQuery2[TC, TC1]':
+        return JoinQuery2(self.table1, next, JoinType.Left, on, self._selection)
 
     def where(self, constraint: Constraint[TC] | None = None) -> 'Query1[TC]':
         return Query1(self.table1, _resolve_selection(self._selection, self.table1), constraint)
@@ -220,7 +220,7 @@ class JoinQuery2(Generic[TC, TC1]):
     table1: Type[TC]
     table2: Type[TC1]
     join_type_2: JoinType
-    on_2: Sequence[Constraint2[TC, TC1]]
+    on_2: Constraint2[TC, TC1] | None
     _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any]] | None = None
 
     def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'JoinQuery2[TC, TC1]':
@@ -229,11 +229,11 @@ class JoinQuery2(Generic[TC, TC1]):
     def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any]) -> 'JoinQuery2[TC, TC1]':
         return JoinQuery2(self.table1, self.table2, self.join_type_2, self.on_2, [*(self._selection or []), sel, *sels])
 
-    def join_inner(self, next: Type[TC2], *on: Constraint3[TC, TC1, TC2]) -> 'JoinQuery3[TC, TC1, TC2]':
-        return JoinQuery3(self.table1, self.table2, next, self.join_type_2, self.on_2, JoinType.Inner, list(on), self._selection)
+    def join_inner(self, next: Type[TC2], on: Constraint3[TC, TC1, TC2] | None = None) -> 'JoinQuery3[TC, TC1, TC2]':
+        return JoinQuery3(self.table1, self.table2, next, self.join_type_2, self.on_2, JoinType.Inner, on, self._selection)
 
-    def join_left(self, next: Type[TC2], *on: Constraint3[TC, TC1, TC2]) -> 'JoinQuery3[TC, TC1, TC2]':
-        return JoinQuery3(self.table1, self.table2, next, self.join_type_2, self.on_2, JoinType.Left, list(on), self._selection)
+    def join_left(self, next: Type[TC2], on: Constraint3[TC, TC1, TC2] | None = None) -> 'JoinQuery3[TC, TC1, TC2]':
+        return JoinQuery3(self.table1, self.table2, next, self.join_type_2, self.on_2, JoinType.Left, on, self._selection)
 
     def where(self, constraint: Constraint2[TC, TC1] | None = None) -> 'Query2[TC, TC1]':
         return Query2(self.table1, self.table2, self.join_type_2, self.on_2, _resolve_selection(self._selection, self.table1, self.table2), constraint)
@@ -243,7 +243,7 @@ class Query2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1
     table1: Type[TC]
     table2: Type[TC1]
     join_type_2: JoinType
-    on_2: Sequence[Constraint2[TC, TC1]]
+    on_2: Constraint2[TC, TC1] | None
     _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any]]
     _where: Constraint2[TC, TC1] | None = None
 
@@ -258,13 +258,13 @@ class Query2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1
 
     def to_sql(self) -> str:
         assert len(self._selection) > 0, 'You must select at least one column'
-        assert len(self.on_2) > 0, 'You must specify at least one join condition for join 2'
+        assert self.on_2 is not None, 'You must specify a join condition for join 2'
 
         selections = ', '.join(_qualified_label(p) for p in self._selection)
         where_clause = '' if self._where is None else ' WHERE ' + self._where.to_sql()
 
         from_clause = f'{self.table1.__name__.lower()}'
-        on_2_clause = ' AND '.join(c.to_sql() for c in self.on_2)
+        on_2_clause = self.on_2.to_sql()
         from_clause += f' {self.join_type_2.value} JOIN {self.table2.__name__.lower()} ON {on_2_clause}'
 
         return f'SELECT {selections} FROM {from_clause}{where_clause};'
@@ -275,9 +275,9 @@ class JoinQuery3(Generic[TC, TC1, TC2]):
     table2: Type[TC1]
     table3: Type[TC2]
     join_type_2: JoinType
-    on_2: Sequence[Constraint2[TC, TC1]]
+    on_2: Constraint2[TC, TC1] | None
     join_type_3: JoinType
-    on_3: Sequence[Constraint3[TC, TC1, TC2]]
+    on_3: Constraint3[TC, TC1, TC2] | None
     _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]] | None = None
 
     def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'JoinQuery3[TC, TC1, TC2]':
@@ -286,11 +286,11 @@ class JoinQuery3(Generic[TC, TC1, TC2]):
     def select_more(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]) -> 'JoinQuery3[TC, TC1, TC2]':
         return JoinQuery3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, [*(self._selection or []), sel, *sels])
 
-    def join_inner(self, next: Type[TC3], *on: Constraint4[TC, TC1, TC2, TC3]) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
-        return JoinQuery4(self.table1, self.table2, self.table3, next, self.join_type_2, self.on_2, self.join_type_3, self.on_3, JoinType.Inner, list(on), self._selection)
+    def join_inner(self, next: Type[TC3], on: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
+        return JoinQuery4(self.table1, self.table2, self.table3, next, self.join_type_2, self.on_2, self.join_type_3, self.on_3, JoinType.Inner, on, self._selection)
 
-    def join_left(self, next: Type[TC3], *on: Constraint4[TC, TC1, TC2, TC3]) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
-        return JoinQuery4(self.table1, self.table2, self.table3, next, self.join_type_2, self.on_2, self.join_type_3, self.on_3, JoinType.Left, list(on), self._selection)
+    def join_left(self, next: Type[TC3], on: Constraint4[TC, TC1, TC2, TC3] | None = None) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
+        return JoinQuery4(self.table1, self.table2, self.table3, next, self.join_type_2, self.on_2, self.join_type_3, self.on_3, JoinType.Left, on, self._selection)
 
     def where(self, constraint: Constraint3[TC, TC1, TC2] | None = None) -> 'Query3[TC, TC1, TC2]':
         return Query3(self.table1, self.table2, self.table3, self.join_type_2, self.on_2, self.join_type_3, self.on_3, _resolve_selection(self._selection, self.table1, self.table2, self.table3), constraint)
@@ -301,9 +301,9 @@ class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialMode
     table2: Type[TC1]
     table3: Type[TC2]
     join_type_2: JoinType
-    on_2: Sequence[Constraint2[TC, TC1]]
+    on_2: Constraint2[TC, TC1] | None
     join_type_3: JoinType
-    on_3: Sequence[Constraint3[TC, TC1, TC2]]
+    on_3: Constraint3[TC, TC1, TC2] | None
     _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any]]
     _where: Constraint3[TC, TC1, TC2] | None = None
 
@@ -318,16 +318,16 @@ class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialMode
 
     def to_sql(self) -> str:
         assert len(self._selection) > 0, 'You must select at least one column'
-        assert len(self.on_2) > 0, 'You must specify at least one join condition for join 2'
-        assert len(self.on_3) > 0, 'You must specify at least one join condition for join 3'
+        assert self.on_2 is not None, 'You must specify a join condition for join 2'
+        assert self.on_3 is not None, 'You must specify a join condition for join 3'
 
         selections = ', '.join(_qualified_label(p) for p in self._selection)
         where_clause = '' if self._where is None else ' WHERE ' + self._where.to_sql()
 
         from_clause = f'{self.table1.__name__.lower()}'
-        on_2_clause = ' AND '.join(c.to_sql() for c in self.on_2)
+        on_2_clause = self.on_2.to_sql()
         from_clause += f' {self.join_type_2.value} JOIN {self.table2.__name__.lower()} ON {on_2_clause}'
-        on_3_clause = ' AND '.join(c.to_sql() for c in self.on_3)
+        on_3_clause = self.on_3.to_sql()
         from_clause += f' {self.join_type_3.value} JOIN {self.table3.__name__.lower()} ON {on_3_clause}'
 
         return f'SELECT {selections} FROM {from_clause}{where_clause};'
@@ -339,11 +339,11 @@ class JoinQuery4(Generic[TC, TC1, TC2, TC3]):
     table3: Type[TC2]
     table4: Type[TC3]
     join_type_2: JoinType
-    on_2: Sequence[Constraint2[TC, TC1]]
+    on_2: Constraint2[TC, TC1] | None
     join_type_3: JoinType
-    on_3: Sequence[Constraint3[TC, TC1, TC2]]
+    on_3: Constraint3[TC, TC1, TC2] | None
     join_type_4: JoinType
-    on_4: Sequence[Constraint4[TC, TC1, TC2, TC3]]
+    on_4: Constraint4[TC, TC1, TC2, TC3] | None
     _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]] | None = None
 
     def select(self, sel: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any], *sels: PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]) -> 'JoinQuery4[TC, TC1, TC2, TC3]':
@@ -362,11 +362,11 @@ class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], Partia
     table3: Type[TC2]
     table4: Type[TC3]
     join_type_2: JoinType
-    on_2: Sequence[Constraint2[TC, TC1]]
+    on_2: Constraint2[TC, TC1] | None
     join_type_3: JoinType
-    on_3: Sequence[Constraint3[TC, TC1, TC2]]
+    on_3: Constraint3[TC, TC1, TC2] | None
     join_type_4: JoinType
-    on_4: Sequence[Constraint4[TC, TC1, TC2, TC3]]
+    on_4: Constraint4[TC, TC1, TC2, TC3] | None
     _selection: Sequence[PropSelect[TC, Any] | PropSelect[TC1, Any] | PropSelect[TC2, Any] | PropSelect[TC3, Any]]
     _where: Constraint4[TC, TC1, TC2, TC3] | None = None
 
@@ -381,19 +381,19 @@ class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], Partia
 
     def to_sql(self) -> str:
         assert len(self._selection) > 0, 'You must select at least one column'
-        assert len(self.on_2) > 0, 'You must specify at least one join condition for join 2'
-        assert len(self.on_3) > 0, 'You must specify at least one join condition for join 3'
-        assert len(self.on_4) > 0, 'You must specify at least one join condition for join 4'
+        assert self.on_2 is not None, 'You must specify a join condition for join 2'
+        assert self.on_3 is not None, 'You must specify a join condition for join 3'
+        assert self.on_4 is not None, 'You must specify a join condition for join 4'
 
         selections = ', '.join(_qualified_label(p) for p in self._selection)
         where_clause = '' if self._where is None else ' WHERE ' + self._where.to_sql()
 
         from_clause = f'{self.table1.__name__.lower()}'
-        on_2_clause = ' AND '.join(c.to_sql() for c in self.on_2)
+        on_2_clause = self.on_2.to_sql()
         from_clause += f' {self.join_type_2.value} JOIN {self.table2.__name__.lower()} ON {on_2_clause}'
-        on_3_clause = ' AND '.join(c.to_sql() for c in self.on_3)
+        on_3_clause = self.on_3.to_sql()
         from_clause += f' {self.join_type_3.value} JOIN {self.table3.__name__.lower()} ON {on_3_clause}'
-        on_4_clause = ' AND '.join(c.to_sql() for c in self.on_4)
+        on_4_clause = self.on_4.to_sql()
         from_clause += f' {self.join_type_4.value} JOIN {self.table4.__name__.lower()} ON {on_4_clause}'
 
         return f'SELECT {selections} FROM {from_clause}{where_clause};'
