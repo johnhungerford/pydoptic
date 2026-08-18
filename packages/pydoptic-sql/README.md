@@ -37,9 +37,8 @@ with psycopg.connect("host=localhost dbname=mydb user=postgres password=password
             print(Worker.name.get_val_safe(worker))
 ```
 
-Joining a second table narrows and widens the query's type together -- `Constraint2` (not
-`Constraint`) is required for a WHERE/ON clause once a second table is in scope, and can reference
-either table directly:
+Joining a second table generates a new query with two table type parameters. Constraints added to this
+query are widened to include both table properties (e.g., `Constraint2` instead of `Constraint`):
 
 ```python3
 class Department(SqlTable):
@@ -52,6 +51,8 @@ query = SqlQuery.from_table(Worker).join_inner(
     Department, Constraint2.eq(Worker.department_id, Department.id),
 ).select(Worker.name, Department.name).where(Constraint2.gte(Worker.age, 18))
 ```
+
+Currently, queries can include joins up to four tables deep.
 
 See the [pydoptic README](https://github.com/johnhungerford/pydoptic/tree/main/packages/pydoptic) for
 the underlying `Prop`/`Select` model this is built on.
