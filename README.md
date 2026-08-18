@@ -7,6 +7,20 @@ A good alternative to Pydantic when one or more of the following is true:
 2. You frequently need to retrieve and manipulate deeply nested values
 3. You need a type-safe way to refer to properties when querying remote data
 
+## Installation
+
+```bash
+pip install pydoptic
+```
+
+This single package includes all three libraries in this repository:
+- `pydoptic` -- the core data modeling library (see below)
+- `pydoptic_sql` -- a type-safe SQL query builder (see [`src/pydoptic_sql/`](src/pydoptic_sql/))
+- `pydoptic_elastic` -- a reference Elasticsearch integration (see [`src/pydoptic_elastic/`](src/pydoptic_elastic/))
+
+`pydoptic_sql`'s Postgres client (`psycopg`) and `pydoptic_elastic`'s Elasticsearch client are regular
+dependencies, so no extras are needed to use either.
+
 ## Why?
 
 In every programming language, data is modeled as the type of container used to store it in memory. In Python, this generally looks something like the following:
@@ -63,7 +77,7 @@ Whereas traditional data models represent data as *containers* of properties, Py
 Here is what a Pydoptic version of the data model above looks like:
 
 ```python3
-from pydoptic import *
+from pydoptic import BaseModel, PartialModel, Prop, PropOpt, PropOptArr
 from datetime import date
 
 class Address(BaseModel):
@@ -130,19 +144,19 @@ In this case, Pydoptic's model is substantially *less* verbose. We can reproduce
 ```python3
 select_related_statuses = Person.organizations(Organization.members)(Person.is_active)
 
-statuses = related_status_select.get(person).as_list
+statuses = select_related_statuses.get(person).as_list
 print(statuses) 
 # [True, False, False, True, ...]
 
 # All the updating is done here:
-related_status_select.update(person, lambda status: !status)
+select_related_statuses.update(person, lambda status: !status)
 
-statuses = related_status_select.get(person).as_list
+statuses = select_related_statuses.get(person).as_list
 print(statuses) 
 # [False, True, True, False, ...]
 ```
 
-As your type checker should indicate, `select_related_status` is a `Select[Person, bool]` which is composed from the `Prop`s `Person.organizations`, `Organization.members`, and `Person.is_active`. This particular chain of props can compose because each prop's *target* type is the same as the *origin* type of the prop chained to it. When this is not the case (meaning the chaining is *invalid*), the type checker will complain. The resulting `Select` can then be used to retrieve and update all `Person.is_active` properties (the final `Prop` in the chain) nested within the original `person` via the path `organizations` -> `members` -> `is_active`. Since `Person.organizations` and `Organization.members` are optional properties, ordinarily retrieving and updating these values would require checking for `None` in multiple places.
+As your type checker should indicate, `select_related_statuses` is a `Select[Person, bool]` which is composed from the `Prop`s `Person.organizations`, `Organization.members`, and `Person.is_active`. This particular chain of props can compose because each prop's *target* type is the same as the *origin* type of the prop chained to it. When this is not the case (meaning the chaining is *invalid*), the type checker will complain. The resulting `Select` can then be used to retrieve and update all `Person.is_active` properties (the final `Prop` in the chain) nested within the original `person` via the path `organizations` -> `members` -> `is_active`. Since `Person.organizations` and `Organization.members` are optional properties, ordinarily retrieving and updating these values would require checking for `None` in multiple places.
 
 ### Incomplete data
 
@@ -171,6 +185,7 @@ Since `Prop`s contain all the information about the properties they reference, t
 from pydoptic import Prop, PropOptArr, PartialModel
 from pydoptic_elastic import ElasticModel, Query, ElasticService, elastic_prop, ESMapping
 from datetime import date
+from typing import List
 from elasticsearch import Elasticsearch
 
 class Address(ElasticModel):
@@ -224,6 +239,17 @@ This concept of reified optics comes from the Scala project [ZIO schema](https:/
 
 ## User guide
 
+The examples below assume this import, unless a different one is shown:
+
+```python3
+from pydoptic import (
+    BaseModel, PartialModel, select,
+    Discrim, Prop, PropArr, PropOpt, PropOptArr, PropSelect,
+    Select, SelectArr, SelectOpt, SelectOptArr, SelectVal, SelectValue,
+)
+from typing import Any, Dict, List
+```
+
 ### Defining and constructing models
 
 There are two basic units of data in Pydoptic: `BaseModel` and `PropSelect[A, B]`, where `A` is some subtype of `BaseModel`. Models of type `BaseModel` are defined by their `PropSelect` class attributes, which are class attributes describing what values can be stored in or retrieved from the model:
@@ -249,8 +275,8 @@ Any subclass of `BaseModel` will automatically construct the appropriate values 
 
 ```python3
 class Model2(BaseModel):
-    prop_1: Prop['Model2', int] = property('prop_one', sql_metadata='PRIMARY KEY')
-    prop_2: Prop['Model2', str] = property('prop_two', sql_metadata='FOREIGN KEY')
+    prop_1: Prop['Model2', int] = select('prop_one', sql_metadata='PRIMARY KEY')
+    prop_2: Prop['Model2', str] = select('prop_two', sql_metadata='FOREIGN KEY')
 
 print(f'{prop_1.label}: {prop_1.origin} -> {prop_1.target})
 print(f'Property data: {prop_1.data})
@@ -259,7 +285,7 @@ print(f'Property data: {prop_1.data})
 # Property data: {'sql_metadata': 'PRIMARY_KEY'}
 ```
 
-In the above example, the `property` function is used to customize `prop_1` and `prop_2`, providing different `label`s ("prop_one" and "prop_two") and adding some metadata. As we can see when we log the `data` attribute of the resulting `Prop`, the keyword arguments we provide to the `property` function are captured in the `Prop` in the form of a `dict`. The metadata in the example above could be used to generate a SQL table from `MyModel`, or interpret `join` queries using `prop_2`.
+In the above example, the `select` function is used to customize `prop_1` and `prop_2`, providing different `label`s ("prop_one" and "prop_two") and adding some metadata. As we can see when we log the `data` attribute of the resulting `Prop`, the keyword arguments we provide to the `select` function are captured in the `Prop` in the form of a `dict`. The metadata in the example above could be used to generate a SQL table from `MyModel`, or interpret `join` queries using `prop_2`.
 
 Once you define a model, there are kinds of instances we can construct:
 
@@ -789,7 +815,7 @@ print(value)
 # Root(super=[Sub1(prop_1=24), Sub2(prop_2="hello")])
 ```
 
-The `Discr[A, B]` type is a `SelectOpt` that selects down from some value of supertype `B` to a subtype `A`, filtering out cases where it is not that subtype. Note that `Discr` property is treated differently by `BaseModel` than regular properties. It generates a special string attribute `subtype` (or whatever the property name is) that is automatically set to the class name of the subtype when a model is constructed. The `Discr` `Select` checks whether this string value matches the class name to conclude it is the correct subtype.
+The `Discrim[A, B]` type is a `SelectOpt` that selects down from some value of supertype `B` to a subtype `A`, filtering out cases where it is not that subtype. Note that `Discrim` property is treated differently by `BaseModel` than regular properties. It generates a special string attribute `subtype` (or whatever the property name is) that is automatically set to the class name of the subtype when a model is constructed. The `Discrim` `Select` checks whether this string value matches the class name to conclude it is the correct subtype.
 
 You can see the discriminator value if you convert a model to a `dict`:
 
@@ -811,7 +837,7 @@ class Model(BaseModel):
     prop_1: Prop['Model', int]
     prop_2: Prop['Model', str]
 
-all_props: List[PropSelect[Any, Any] | Discr[Any, Any]] = Model.properties()
+all_props: List[PropSelect[Any, Any] | Discrim[Any, Any]] = Model.properties()
 
 assert len(all_props) == 2
 assert all_props[0] = Model.prop_1
