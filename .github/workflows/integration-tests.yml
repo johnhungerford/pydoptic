@@ -12,8 +12,14 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # pydoptic itself has no integration tests -- only the packages with live-service backends do.
+        package: [pydoptic-sql, pydoptic-elastic]
     services:
-      # Mirrors docker-compose.yml's `db` service; connection details match test/pydoptic_sql/test_sql_service.py's _DB_DSN.
+      # Mirrors docker-compose.yml's `db` service; connection details match
+      # packages/pydoptic-sql/test/test_sql_service.py's _DB_DSN.
       postgres:
         image: postgres
         env:
@@ -51,7 +57,9 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -e .[test]
+        run: |
+          pip install -e packages/pydoptic
+          pip install -e "packages/${{ matrix.package }}[test]"
 
       - name: Run integration tests
-        run: PYTHONPATH=src python -m pytest test -q -m integration
+        run: cd packages/${{ matrix.package }} && python -m pytest test -q -m integration

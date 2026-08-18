@@ -1,10 +1,12 @@
 # CONTEXT.md
 
-Working notes for an ongoing feature-development session on `pydoptic_sql`, written because the
-conversation that produced this work is about to run out of context. Read this before continuing
-the work — it captures *why* things are shaped the way they are, which the code alone won't tell you
-and which took real back-and-forth to arrive at. Skipping it risks re-litigating settled design
-questions or reintroducing bugs that were already found and fixed.
+Working notes for an ongoing development session on this repo, written because the conversation that
+produced this work is about to run out of context. Read this before continuing the work — it captures
+*why* things are shaped the way they are, which the code alone won't tell you and which took real
+back-and-forth to arrive at. Skipping it risks re-litigating settled design questions or reintroducing
+bugs that were already found and fixed. The session started as `pydoptic_sql` feature work (the "two
+arity strategies" section below and everything under it) and later shifted to packaging/publishing
+infrastructure (everything from "Repo structure / packaging" onward) — both are still live context.
 
 ## Where the work actually lives
 
@@ -14,54 +16,58 @@ That's where every commit below actually landed. If you're reading this from a g
 *not* where this work happened — don't use it as a source of truth for current file contents.
 
 Live Postgres integration tests connect to `host=localhost port=5432 dbname=pydoptic user=postgres
-password=password` (see `docker-compose.yml`); bring it up with `docker compose up -d db` if it's not
-already running. Elasticsearch (also in `docker-compose.yml`) is unrelated to this work.
+password=password` (see `docker-compose.yml`); bring it up with `docker compose up -d` if it's not
+already running (this also brings up Elasticsearch, used by `pydoptic-elastic`'s integration tests).
 
 ## What `pydoptic_sql` is
 
 A type-safe SQL query builder layered on `pydoptic` (the base package's "reified optics" / selector
-system — `Select`, `PropSelect`, `Prop`, `PropOpt`, etc. in `src/pydoptic/selector.py`). Its
-distinguishing feature versus mainstream options (SQLAlchemy, peewee, etc.): join arity is tracked in
-the type system itself, so a WHERE/ON/HAVING clause can't reference a table that isn't actually in
-scope at that point in a join chain — mypy catches it, not just Postgres at runtime.
+system — `Select`, `PropSelect`, `Prop`, `PropOpt`, etc. in
+`packages/pydoptic/src/pydoptic/selector.py`). Its distinguishing feature versus mainstream options
+(SQLAlchemy, peewee, etc.): join arity is tracked in the type system itself, so a WHERE/ON/HAVING
+clause can't reference a table that isn't actually in scope at that point in a join chain — mypy
+catches it, not just Postgres at runtime.
 
 ## Commands
 
 ```bash
-# from repo root
-venv/bin/python -m mypy . --config-file mypy.ini
-PYTHONPATH=src venv/bin/python -m pytest test -q
+# from repo root -- mypy checks all three packages at once (see mypy.ini's mypy_path)
+venv/bin/python -m mypy packages --config-file mypy.ini
+
+# pytest.ini at the repo root registers the `integration` marker for this combined run
+venv/bin/python -m pytest packages -q               # unit tests, all three packages
+venv/bin/python -m pytest packages -q -m integration # live-service integration tests
+
+# to run a single package's tests in isolation (this is what CI actually does per-package):
+cd packages/pydoptic-sql && ../../venv/bin/python -m pytest test -q
 ```
 `venv/` at the repo root already has mypy and pytest installed — use it rather than system Python
-(which is too old for this codebase's `match` statements etc.).
+(which is too old for this codebase's `match` statements etc.). After the packaging split (see below),
+local dev needs all three packages installed editable — `pip install -e packages/pydoptic` then
+`pip install -e "packages/pydoptic-sql[test]"` and `pip install -e "packages/pydoptic-elastic[test]"`.
 
 ## Current state
 
-- Everything through **"Add HAVING support to the SqlQuery DSL"** (commit `61c212a`) is committed on
-  `main`.
-- Since then, two more features landed in the same session, **built, tested, and verified, but not
-  yet committed**:
-  1. **`Constraint.incr_arity()` / `HavingConstraint.incr_arity()`** (arities 1→2, 2→3, 3→4) on every
-     concrete subclass (`Or`/`And`/`Not`/`Comp`/`Between`/`In` and their `Having` counterparts) in
-     `sql_constraint.py`/`sql_having.py` — rewraps the same operands into the next arity's class.
-  2. **Collapsed the builder/terminal split** in `sql_query.py`: `SelectQuery`/`JoinQuery2..4`
-     (plain and `Computed`) are gone, merged into `Query1..4`/`ComputedQuery1..4`, each directly
-     executable (`to_sql`/`to_sql_params`) at every stage. `join_inner`/`join_left` now call
-     `incr_arity()` on `_where` (and `_having`, for `Computed` queries) instead of requiring them
-     unset. Added `where_and`/`where_or` (mirroring the existing `having_and`/`having_or`). This is
-     exactly the redesign flagged as pending in the previous version of this doc — see "The two arity
-     strategies" below for the corrected picture.
-  Modified files: `src/pydoptic_sql/sql_constraint.py`, `src/pydoptic_sql/sql_having.py`,
-  `src/pydoptic_sql/sql_query.py`, `src/pydoptic_sql/sql_service.py` (updated to call the new
-  `query._resolved_selection()` instead of reading `query._selection` directly, since selection
-  resolution is now lazy — see below), plus matching test updates across
-  `test/pydoptic_sql/test_sql_{constraint,having,query,computed,service}.py`. Commit these (with the
-  user's go-ahead) before starting anything new, or the next session will have to rediscover this same
-  context.
-- mypy is clean (27 source files). Full test suite is 299 passed (unit tests + live-Postgres
-  integration tests — the latter require the `db` container above to be running).
+- Everything through **"Re-export full public API from each package's `__init__.py`, add README
+  install docs"** (commit `b41e03e`) is committed on `main` and pushed to
+  `github.com:johnhungerford/pydoptic.git`.
+- Since then, this repo was **split into three independently-published packages** (`pydoptic`,
+  `pydoptic-sql`, `pydoptic-elastic` — previously all published as one `pydoptic` distribution), **done
+  and locally verified, but not yet committed**. See "Repo structure / packaging" below for the full
+  rationale and layout. In short: `src/pydoptic{,_sql,_elastic}/` and `test/pydoptic{,_sql,_elastic}/`
+  moved to `packages/{pydoptic,pydoptic-sql,pydoptic-elastic}/{src,test}/...`, each package gained its
+  own `pyproject.toml`, the root `pyproject.toml` is gone (replaced by a root `pytest.ini` for
+  local-dev convenience only), `mypy.ini` gained a `mypy_path` pointing at all three `src/` roots, and
+  all four `.github/workflows/*.yml` were updated to matrix over the three packages. Also fixed along
+  the way: `pydoptic_sql` was missing its `py.typed` marker (added), and the unused `jsonschema`
+  dependency was dropped (verified zero references anywhere in the codebase before removing).
+  Re-verified locally after the move: `mypy packages --config-file mypy.ini` clean (27 source files),
+  `pytest packages -q` → 281 passed/18 deselected, `pytest packages -q -m integration` → 18 passed/281
+  deselected, and per-package invocation (`cd packages/<name> && pytest test -q[, -m integration]`)
+  matches those same counts split three ways (88/0, 192/16, 1/2) — exactly the same 299 total as before
+  the split. Commit this (with the user's go-ahead) before starting anything new.
 
-## Module map (`src/pydoptic_sql/`)
+## Module map (`packages/pydoptic-sql/src/pydoptic_sql/`)
 
 | File | Purpose |
 |---|---|
@@ -73,9 +79,76 @@ PYTHONPATH=src venv/bin/python -m pytest test -q
 | `sql_query.py` | The big one (~1150 lines): `SqlQuery` base + one query class per join arity, both plain (`Query1..4`) and `Computed` (`ComputedQuery1..4`) variants — no separate builder/terminal classes (see below). |
 | `sql_service.py` | `PsycoPgSqlClient`/`Transaction`/`*Response` — executes queries against Postgres via `psycopg`, decodes rows back into `PartialModel`/`ComputedResult` |
 
-Tests mirror this 1:1 under `test/pydoptic_sql/` (`test_sql_query.py`, `test_sql_constraint.py`,
-`test_sql_params.py`, `test_sql_computed.py`, `test_sql_having.py`, `test_sql_service.py` for the
-live-DB integration tests).
+Tests mirror this 1:1 under `packages/pydoptic-sql/test/` (`test_sql_query.py`,
+`test_sql_constraint.py`, `test_sql_params.py`, `test_sql_computed.py`, `test_sql_having.py`,
+`test_sql_service.py` for the live-DB integration tests).
+
+## Repo structure / packaging
+
+**Why the split happened**: originally all three packages (`pydoptic`, `pydoptic_sql`,
+`pydoptic_elastic`) were auto-discovered from a single shared `src/` and published as one `pydoptic`
+distribution. `pip install pydoptic` therefore always pulled in `psycopg` and `elasticsearch`
+regardless of whether you wanted the SQL or Elasticsearch integrations at all — the user didn't want
+that. Splitting into separately-published packages while keeping them developed together in one repo
+(a monorepo) is the fix.
+
+**Layout**: `packages/<name>/` is a fully self-contained project — its own `pyproject.toml`, its own
+`src/<import_name>/`, its own `test/`. PyPI distribution names are hyphenated (`pydoptic-sql`,
+`pydoptic-elastic`) per PyPI convention; the Python *import* names are unchanged (`pydoptic_sql`,
+`pydoptic_elastic` — underscore, since hyphens aren't legal in Python identifiers). Only `pydoptic`
+core has no dependency on the other two; `pydoptic_sql`/`pydoptic_elastic` both depend on `pydoptic`
+but not on each other (verified via grep before splitting — zero cross-imports between them). Things
+that stay shared at the repo root rather than being duplicated per package: `docker-compose.yml`,
+`mypy.ini`, `.github/workflows/`, `LICENSE` (also copied into each package dir so each sdist/wheel
+carries its own copy — trivial, zero drift risk for a license file), and this file.
+
+**README split**: the ~850-line tutorial (reified optics concepts, the full user guide) moved to
+`packages/pydoptic/README.md` — it's fundamentally about `pydoptic` core, not the SQL/Elastic
+integrations, and giving `pydoptic-sql`/`pydoptic-elastic` their own `readme = "README.md"` pointing
+*outside* their own project directory (e.g. `../../README.md`) was deliberately avoided as a
+packaging-metadata reference that's a known source of sdist/build-frontend friction, in favor of
+something guaranteed to work with any build tool. `pydoptic-sql` and `pydoptic-elastic` each got a
+short, genuinely new README (this repo had zero SQL usage documentation before, and only an inline
+Elasticsearch example previously buried in the monolithic README) — both examples were verified to
+actually run (the SQL one via `.to_sql()` output inspection, the Elasticsearch one live against the
+`docker-compose.yml` ES instance) before being written down, not just eyeballed. The repo-root
+`README.md` is now a short landing page linking to all three.
+
+**Versioning: lockstep, not independent.** All three packages share one version number, derived from
+git tags via `setuptools-scm` — a single `vX.Y.Z` tag bumps and (potentially) publishes all three
+together. This was an explicit choice over independent per-package versions/tags: independent
+versioning is more precise (a `pydoptic_sql`-only change wouldn't bump `pydoptic`'s version) but needs
+per-package tag prefixes, per-package `tag_regex` config, and more day-to-day tagging discipline —
+overkill for a project at this stage. The lockstep mechanism has no extra moving parts: each package's
+`[tool.setuptools_scm]` sets `root = "../.."` (since its `pyproject.toml` is no longer at the git root)
+pointing at the *same* git root, so all three independently compute the identical version from the
+same tag/commit-distance automatically — there's no separate step that keeps them "in sync," it's just
+an emergent property of all three reading the same git history the same way.
+
+**CI**: `unit-tests.yml`/`integration-tests.yml` now matrix over the three packages (integration only
+over `pydoptic-sql`/`pydoptic-elastic` — `pydoptic` core has no integration tests). Each matrix leg
+installs `packages/pydoptic` editable first (so pip's resolver is satisfied by this checkout's copy of
+`pydoptic` rather than fetching one from PyPI for the `pydoptic-sql`/`pydoptic-elastic` legs, which
+declare an unpinned `pydoptic` dependency), then that leg's own package with its `[test]` extra, then
+runs `pytest test -q` from inside that package's own directory (not from the repo root) so each leg
+picks up *its own* `pyproject.toml`'s `[tool.pytest.ini_options]` — pytest doesn't merge config from
+multiple ini files in one run, so a combined root-level invocation wouldn't see the `integration`
+marker registration/addopts declared in the per-package files. `release.yml`/`snapshot.yml` matrix the
+`build` and `publish-to-pypi` jobs the same way (`python -m build packages/<name>`, artifact named
+`dist-<name>` per leg since `upload-artifact@v4` requires unique names within a run), reusing the same
+`environment: pypi` across all three matrix legs — trusted-publisher matching on PyPI's side is by
+(repo, workflow filename, environment) *and* the target project (encoded in the built distribution's
+own metadata, not the environment name), so the same environment name can be — and is — registered as
+a trusted publisher on multiple different PyPI projects independently. `github-release` (in
+`release.yml` only) stays a single non-matrixed job that waits on all three `publish-to-pypi` legs and
+attaches all three's build artifacts to one GitHub Release, since lockstep versioning means one tag =
+one release covering all three packages, not three separate releases.
+
+**Still needed on the user's end, not something Claude can do**: register trusted publishers on PyPI
+for the two *new* projects (`pydoptic-sql`, `pydoptic-elastic`) — same pattern as the existing
+`pydoptic` ones (owner `johnhungerford`, repo `pydoptic`, workflow filename `release.yml` and
+`snapshot.yml`, environment `pypi`), just registered on `pydoptic-sql`'s and `pydoptic-elastic`'s own
+PyPI project pages instead of `pydoptic`'s.
 
 ## The two arity strategies — the single most important thing to understand here
 

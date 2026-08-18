@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pydoptic-sql"
+dynamic = ["version"]
+authors = [{ name = "John Hungerford" }]
+urls = { Source = "https://github.com/johnhungerford/pydoptic" }
+description = "A type-safe SQL query builder built on pydoptic"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.8,<3.14"
+dependencies = [
+    "pydoptic",
+    "psycopg[binary]==3.2.12",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest~=8.4.2",
+]
+types = [
+    "mypy~=1.18.2",
+]
+
+[tool.setuptools_scm]
+# See packages/pydoptic/pyproject.toml -- same repo-wide lockstep version, same reasoning.
+root = "../.."
+version_scheme = "no-guess-dev"
+local_scheme = "no-local-version"
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: requires a live Postgres instance started via docker-compose.yml; excluded by default, opt in with `-m integration`",
+]
+addopts = "-m 'not integration'"

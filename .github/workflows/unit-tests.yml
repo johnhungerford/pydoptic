@@ -13,6 +13,10 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [pydoptic, pydoptic-sql, pydoptic-elastic]
     steps:
       - uses: actions/checkout@v4
 
@@ -22,9 +26,13 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -e .[test]
+        # pydoptic-sql/pydoptic-elastic depend on pydoptic; installing it editable first means pip's
+        # resolver is satisfied by this checkout's copy instead of fetching one from PyPI.
+        run: |
+          pip install -e packages/pydoptic
+          pip install -e "packages/${{ matrix.package }}[test]"
 
       - name: Run unit tests
-        # Integration tests are excluded by default (see pyproject.toml addopts);
+        # Integration tests are excluded by default (see each package's pyproject.toml addopts);
         # they require live services and run only in integration-tests.yml.
-        run: PYTHONPATH=src python -m pytest test -q
+        run: cd packages/${{ matrix.package }} && python -m pytest test -q

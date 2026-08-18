@@ -13,6 +13,9 @@ jobs:
   build:
     name: Build distribution
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: [pydoptic, pydoptic-sql, pydoptic-elastic]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,29 +32,32 @@ jobs:
       - name: Build sdist and wheel
         # No tag on this commit, so setuptools-scm (with version_scheme = "no-guess-dev" in
         # pyproject.toml) produces a PEP 440 pre-release version like "0.1.0.dev5" -- unique per
-        # commit distance from the last tag, and excluded from `pip install pydoptic` by default
-        # (requires --pre to opt in), so this can't be mistaken for a real release.
-        run: python -m build
+        # commit distance from the last tag, and excluded from `pip install` by default (requires
+        # --pre to opt in), so this can't be mistaken for a real release.
+        run: python -m build packages/${{ matrix.package }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dist
-          path: dist/
+          name: dist-${{ matrix.package }}
+          path: packages/${{ matrix.package }}/dist/
 
   publish-to-pypi:
     name: Publish snapshot to PyPI
     needs: build
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: [pydoptic, pydoptic-sql, pydoptic-elastic]
     environment:
       name: pypi
-      url: https://pypi.org/p/pydoptic
+      url: https://pypi.org/p/${{ matrix.package }}
     permissions:
       id-token: write  # required for PyPI trusted publishing (OIDC)
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: dist
+          name: dist-${{ matrix.package }}
           path: dist/
 
       - uses: pypa/gh-action-pypi-publish@release/v1

@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pydoptic"
+dynamic = ["version"]
+authors = [{ name = "John Hungerford" }]
+urls = { Source = "https://github.com/johnhungerford/pydoptic" }
+description = "Model data using reified optics"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.8,<3.14"
+dependencies = []
+
+[project.optional-dependencies]
+test = [
+    "pytest~=8.4.2",
+]
+types = [
+    "mypy~=1.18.2",
+]
+benchmark = [
+    "pydantic~=2.11",
+]
+
+[tool.setuptools_scm]
+# This package lives in a subdirectory of the repo (packages/pydoptic/), not the git root, so
+# setuptools-scm needs to be told where to find .git. All three packages in this repo point `root`
+# at the same git root and therefore always compute the same version from the same tags -- that's
+# the whole mechanism behind this repo's lockstep versioning, no extra config needed to keep them in
+# sync.
+root = "../.."
+version_scheme = "no-guess-dev"
+local_scheme = "no-local-version"
