@@ -1,4 +1,4 @@
-from pydoptic.base_model import BaseModel, PartialModel, select
+from pydoptic.base_model import BaseModel, Partial, select
 from pydoptic.selector import (
     Discrim,
     LinkedSelect,
@@ -25,7 +25,7 @@ from pydoptic.selector import (
 from pydoptic.validate_types import Validator
 
 __all__ = [
-    'BaseModel', 'PartialModel', 'select',
+    'BaseModel', 'Partial', 'select',
     'Discrim', 'LinkedSelect', 'LinkedSelectArr', 'LinkedSelectOpt', 'LinkedSelectOptArr', 'LinkedSelectVal',
     'MatchSelect', 'ModelLike', 'Param', 'Prop', 'PropArr', 'PropOpt', 'PropOptArr', 'PropSelect',
     'Select', 'Selectable', 'SelectArr', 'SelectOpt', 'SelectOptArr', 'SelectVal', 'SelectValue',

@@ -24,7 +24,7 @@ class Other(BaseModel):
 class Another(BaseModel):
     value: Prop['Another', float]
 
-def test_partial_model_constructed_from_full_model():
+def test_partial_constructed_from_full_model():
     model_value = TestModel(
         annotation="str",
         select_val_empty=1,
@@ -55,7 +55,7 @@ def test_partial_model_constructed_from_full_model():
     assert model_value.other.value == True # type: ignore[attr-defined]
     assert model_value.other.another.value == 0.2 # type: ignore[attr-defined]
 
-def test_partial_model_should_accept_all_valid_values():
+def test_partial_should_accept_all_valid_values():
     model_value = TestModel.partial(
         annotation="str",
         select_val_empty=1,
@@ -86,7 +86,7 @@ def test_partial_model_should_accept_all_valid_values():
     assert model_value.other.value == True # type: ignore[attr-defined]
     assert model_value.other.another.value == 0.2 # type: ignore[attr-defined]
 
-def test_complete_partial_model_should_become_full_model():
+def test_complete_partial_should_become_full_model():
     model_value = TestModel.partial(
         annotation="str",
         select_val_empty=1,
@@ -117,7 +117,7 @@ def test_complete_partial_model_should_become_full_model():
     assert model_value.other.value == True # type: ignore[attr-defined]
     assert model_value.other.another.value == 0.2 # type: ignore[attr-defined]
 
-def test_partial_model_should_accept_valid_missing_arguments():
+def test_partial_should_accept_valid_missing_arguments():
     model_value = TestModel.partial(
         annotation="str",
         select_val_empty=1,
@@ -146,7 +146,7 @@ def test_partial_model_should_accept_valid_missing_arguments():
     with pytest.raises(AttributeError):
         model_value.select_opt_arr_renamed # type: ignore[attr-defined]
 
-def test_partial_model_should_accept_partial_model_for_nested_models_if_complete():
+def test_partial_should_accept_partial_for_nested_models_if_complete():
     model_value = TestModel.partial(
         annotation="str",
         select_val_empty=1,
@@ -161,14 +161,14 @@ def test_partial_model_should_accept_partial_model_for_nested_models_if_complete
         ),
     )
 
-    assert isinstance(model_value.other, PartialModel) # type: ignore[attr-defined]
+    assert isinstance(model_value.other, Partial) # type: ignore[attr-defined]
     assert model_value.other.model is Other # type: ignore[attr-defined]
     assert model_value.other.value == True # type: ignore[attr-defined]
-    assert isinstance(model_value.other.another, PartialModel) # type: ignore[attr-defined]
+    assert isinstance(model_value.other.another, Partial) # type: ignore[attr-defined]
     assert model_value.other.another.model is Another # type: ignore[attr-defined]
     assert model_value.other.another.value == 0.2 # type: ignore[attr-defined]
 
-def test_partial_model_should_accept_dict_for_nested_models_if_complete():
+def test_partial_should_accept_dict_for_nested_models_if_complete():
     model_value = TestModel.partial(
         annotation="str",
         select_val_empty=1,
@@ -183,14 +183,14 @@ def test_partial_model_should_accept_dict_for_nested_models_if_complete():
         },
     )
 
-    assert isinstance(model_value.other, PartialModel) # type: ignore[attr-defined]
+    assert isinstance(model_value.other, Partial) # type: ignore[attr-defined]
     assert model_value.other.model is Other # type: ignore[attr-defined]
     assert model_value.other.value == True # type: ignore[attr-defined]
-    assert isinstance(model_value.other.another, PartialModel) # type: ignore[attr-defined]
+    assert isinstance(model_value.other.another, Partial) # type: ignore[attr-defined]
     assert model_value.other.another.model is Another # type: ignore[attr-defined]
     assert model_value.other.another.value == 0.2 # type: ignore[attr-defined]
 
-def test_partial_model_init_should_succeed_if_required_param_is_missing():
+def test_partial_init_should_succeed_if_required_param_is_missing():
     model_value = TestModel.partial(
         select_val_empty=1,
         select_val_renamed=1,
@@ -219,7 +219,7 @@ def test_partial_model_init_should_succeed_if_required_param_is_missing():
     assert model_value.select_opt_arr_empty == [1,2,3] # type: ignore[attr-defined]
     assert model_value.select_opt_arr_renamed == [1,2,3] # type: ignore[attr-defined]
 
-def test_incomplete_partial_model_should_fail_to_become_full_model_if_missing_params_are_not_provided():
+def test_incomplete_partial_should_fail_to_become_full_model_if_missing_params_are_not_provided():
     passed = False
     try:
         TestModel.partial(
@@ -244,7 +244,7 @@ def test_incomplete_partial_model_should_fail_to_become_full_model_if_missing_pa
     assert passed
 
 
-def test_incomplete_partial_model_should_become_full_model_if_missing_params_are_provided():
+def test_incomplete_partial_should_become_full_model_if_missing_params_are_provided():
     model_value = TestModel.partial(
         annotation="str",
         select_val_renamed=1,
@@ -276,7 +276,7 @@ def test_incomplete_partial_model_should_become_full_model_if_missing_params_are
     assert model_value.other.value == True # type: ignore[attr-defined]
     assert model_value.other.another.value == 0.2 # type: ignore[attr-defined]
 
-def test_partial_model_init_should_fail_if_primitive_type_is_wrong():
+def test_partial_init_should_fail_if_primitive_type_is_wrong():
     passed = True
     try:
         TestModel.partial(
@@ -302,7 +302,7 @@ def test_partial_model_init_should_fail_if_primitive_type_is_wrong():
 
     assert passed is False
 
-def test_partial_model_init_should_fail_if_primitive_array_param_receives_non_array():
+def test_partial_init_should_fail_if_primitive_array_param_receives_non_array():
     passed = True
     try:
         TestModel.partial(
@@ -328,7 +328,7 @@ def test_partial_model_init_should_fail_if_primitive_array_param_receives_non_ar
 
     assert passed is False
 
-def test_partial_model_init_should_fail_if_primitive_array_param_contains_invalid_element():
+def test_partial_init_should_fail_if_primitive_array_param_contains_invalid_element():
     passed = True
     try:
         TestModel(
@@ -355,7 +355,7 @@ def test_partial_model_init_should_fail_if_primitive_array_param_contains_invali
 
     assert passed is False
 
-def test_partial_model_init_should_fail_if_wrong_model_is_passed():
+def test_partial_init_should_fail_if_wrong_model_is_passed():
     passed = True
     try:
         TestModel(
@@ -378,7 +378,7 @@ def test_partial_model_init_should_fail_if_wrong_model_is_passed():
 
     assert passed is False
 
-def test_partial_model_init_should_fail_if_nested_model_is_invalid_dict():
+def test_partial_init_should_fail_if_nested_model_is_invalid_dict():
     passed = True
     try:
         TestModel(
@@ -405,7 +405,7 @@ def test_partial_model_init_should_fail_if_nested_model_is_invalid_dict():
 
     assert passed is False
 
-def test_partial_model_init_should_accept_incomplete_nested_partial_model():
+def test_partial_init_should_accept_incomplete_nested_partial():
     TestModel.partial(
         annotation="str",
         select_val_empty=1,
@@ -426,14 +426,14 @@ def test_partial_model_init_should_accept_incomplete_nested_partial_model():
 class NestedModelExample(BaseModel):
     nested_model: PropArr['NestedModelExample', Another] = select()
 
-def test_partial_model_init_should_accept_valid_nested_model_array():
+def test_partial_init_should_accept_valid_nested_model_array():
     nested_vals = [Another(value=2.0), {'value': 0.2}, Another.partial(value=23.042)]
     result = NestedModelExample.partial(
         nested_model=nested_vals,
     )
     assert [v.value for v in result.nested_model] == [2.0, 0.2, 23.042] # type: ignore[attr-defined]
 
-def test_partial_model_init_should_fail_if_nested_model_array_is_not_array():
+def test_partial_init_should_fail_if_nested_model_array_is_not_array():
     passed = True
     try:
         NestedModelExample.partial(
@@ -445,7 +445,7 @@ def test_partial_model_init_should_fail_if_nested_model_array_is_not_array():
 
     assert passed
 
-def test_patial_model_init_should_fail_if_nested_model_array_contains_invald_model():
+def test_partial_init_should_fail_if_nested_model_array_contains_invalid_model():
     passed = True
     try:
         NestedModelExample.partial(
@@ -460,7 +460,7 @@ def test_patial_model_init_should_fail_if_nested_model_array_contains_invald_mod
 
     assert passed
 
-def test_partial_model_as_mapping_full_should_be_reversable():
+def test_partial_as_mapping_full_should_be_reversable():
     model_value = TestModel.partial(
         annotation="str",
         select_val_empty=1,
@@ -480,7 +480,7 @@ def test_partial_model_as_mapping_full_should_be_reversable():
 
     assert model_value == model_value_2
 
-def test_base_model_select_parts_should_generate_partial_model_from_selectors_p():
+def test_base_model_select_parts_should_generate_partial_from_selectors_p():
     model_value = TestModel.partial(
         annotation="str",
         select_val_renamed=1,
@@ -526,21 +526,21 @@ class Sub2(Base):
 class Root(BaseModel):
     next: Prop['Root', Base]
 
-def test_partial_model_should_construct_with_discrim():
+def test_partial_should_construct_with_discrim():
     value_1 = Root.partial(next=Sub1.partial(v='1', s1v=23))
     value_2 = Root.partial(next=Sub2.partial(v='2', s2v=True))
 
     assert value_1.next.d == 'Sub1' # type: ignore
     assert value_2.next.d == 'Sub2' # type: ignore
 
-def test_partial_model_should_forbid_constructing_with_invalid_discrim():
+def test_partial_should_forbid_constructing_with_invalid_discrim():
     value = Root.partial(next=Sub1.partial(d='Sub1', v='1', s1v=23))
     assert value.next.d == 'Sub1' # type: ignore
 
     with pytest.raises(ValueError):
         Root.partial(next=Sub2.partial(d='wrong!', v='2', s2v=True))
 
-def test_partial_model_should_forbid_setting_invalid_discrim():
+def test_partial_should_forbid_setting_invalid_discrim():
     value = Root.partial(next=Sub1.partial(d='Sub1', v='1', s1v=23))
     assert value.next.d == 'Sub1' # type: ignore
 

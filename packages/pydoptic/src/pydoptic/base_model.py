@@ -172,7 +172,7 @@ class BaseModelMeta(type):
 def _fully_validate(target: Type[M], value: Any, validators: Dict[Type[Any], Validator]) -> M:
     if isinstance(value, target):
         return value
-    elif isinstance(value, PartialModel):
+    elif isinstance(value, Partial):
         if not issubclass(value.model, target):
             raise ValueError(f'received partial model of {value.model} instead of expected model {target}')
         return target(**value.as_dict(), _allow_extra_args=True, _validators=validators)
@@ -187,7 +187,7 @@ class BaseModel(ModelLike, metaclass=BaseModelMeta):
 
     A Pydoptic model consists of `PropSelect` class attributes (`Prop`, `PropOpt`, `PropArr`, and `PropOptArr`) which
     (1) determine which instance attributes are supported, and (2) provide a mechanism for accessing and manipulating data
-    both within instances and other, potentially incomplete data sources (e.g., `PartialModel` or `dict`)
+    both within instances and other, potentially incomplete data sources (e.g., `Partial` or `dict`)
 
     Instances are fully validated.
 
@@ -212,34 +212,34 @@ class BaseModel(ModelLike, metaclass=BaseModelMeta):
         return BaseModel._properties[cls]
 
     @classmethod
-    def partial(cls, **kwargs) -> PartialModel[Self]:
+    def partial(cls, **kwargs) -> Partial[Self]:
         """
         Create a partial instance of this model with a subset of properties. Required properties can be 
-        omitted, but must be otherwise valid. See `PartialModel`.
+        omitted, but must be otherwise valid. See `Partial`.
         """
-        return PartialModel(cls, **kwargs)
+        return Partial(cls, **kwargs)
 
     @classmethod
-    def construct_partial(cls, *values: Param[Self, Any], **kwargs) -> PartialModel[Self]:
+    def construct_partial(cls, *values: Param[Self, Any], **kwargs) -> Partial[Self]:
         """
         Create a partial instance of this model using selectors to specify fields. Required properties can be 
-        omitted, but must be otherwise valid. See `PartialModel`.
+        omitted, but must be otherwise valid. See `Partial`.
         """
-        return PartialModel(cls, **{p.label: p.value for p in values}, **kwargs)
+        return Partial(cls, **{p.label: p.value for p in values}, **kwargs)
 
     @classmethod
     def construct(cls, *values: Param[Self, Any], **kwargs) -> Self:
         """
         Create an instance of this model using selectors to specify fields instead of keyword arguments. 
-        Required properties can be omitted, but must be otherwise valid. See `PartialModel`.
+        Required properties can be omitted, but must be otherwise valid. See `Partial`.
         """
         return cls(**{p.label: p.value for p in values}, **kwargs)
 
-    def as_partial(self) -> PartialModel[Self]:
+    def as_partial(self) -> Partial[Self]:
         """
-        Convert to a `PartialModel`
+        Convert to a `Partial`
         """
-        return PartialModel(self.__class__, **self.as_dict())
+        return Partial(self.__class__, **self.as_dict())
 
     def __init__(self, **kwargs):
         """
@@ -336,7 +336,7 @@ class BaseModel(ModelLike, metaclass=BaseModelMeta):
                 ...
         return mapping
 
-    def select_partial(self, *selectors: Select[Self, Any]) -> PartialModel[Self]:
+    def select_partial(self, *selectors: Select[Self, Any]) -> Partial[Self]:
         """
         Generate a partial version of this instance, selecting the data to retain with one or more `Select` instances.
         """
@@ -345,10 +345,10 @@ class BaseModel(ModelLike, metaclass=BaseModelMeta):
             selector.copy_to(self, data)
         return self.__class__.partial(**data)
 
-def _partly_validate(target: Type[M], value: Any, validators: Dict[Type[Any], Validator]) -> M | PartialModel[M]:
+def _partly_validate(target: Type[M], value: Any, validators: Dict[Type[Any], Validator]) -> M | Partial[M]:
     if isinstance(value, target):
         return value
-    elif isinstance(value, PartialModel):
+    elif isinstance(value, Partial):
         if not issubclass(value.model, target):
             raise ValueError(f'received partial model of {value.model} instead of expected model {target}')
         return value
@@ -359,7 +359,7 @@ def _partly_validate(target: Type[M], value: Any, validators: Dict[Type[Any], Va
 
 M = TypeVar('M', bound=BaseModel)
 
-class PartialModel(Generic[M], Selectable[M]):
+class Partial(Generic[M], Selectable[M]):
     """
     An incomplete version of model instances. Validates data without requiring that all required properties are present.
     """
@@ -453,7 +453,7 @@ class PartialModel(Generic[M], Selectable[M]):
     def as_dict(self) -> Mapping[str, Any]:
         return self._dict
 
-    def select_partial(self, *selectors: Select[M, Any]) -> PartialModel[M]:
+    def select_partial(self, *selectors: Select[M, Any]) -> Partial[M]:
         """
         Generate another partial instance, selecting the data to retain with one or more `Select` instances.
         """

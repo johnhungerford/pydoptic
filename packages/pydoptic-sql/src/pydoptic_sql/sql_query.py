@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Generic, List, Sequence, Tuple, Type, TypeVar, cast
-from pydoptic import PartialModel
+from pydoptic import Partial
 from pydoptic.selector import PropSelect, Prop, PropOpt, Param
 from pydoptic_sql import SqlTable
 from pydoptic_sql.sql_constraint import A, TC, TC1, TC2, TC3, Constraint, Constraint2, Constraint3, Constraint4, _qualified_label
@@ -25,7 +25,7 @@ from pydoptic_sql.sql_table import (
 R = TypeVar('R')
 
 class SqlQuery(Generic[R]):
-    # R is the result type of executing the query (e.g. PartialModel[TC], or None); table type(s) are tracked separately per subclass.
+    # R is the result type of executing the query (e.g. Partial[TC], or None); table type(s) are tracked separately per subclass.
     def to_sql(self) -> str:
         """Render this query as a single SQL string with values interpolated -- for display/debugging only."""
         raise NotImplementedError()
@@ -146,7 +146,7 @@ class JoinType(Enum):
 # calling incr_arity() on them when set, and QueryN/ComputedQueryN are directly executable
 # (to_sql()/to_sql_params()) at every stage, builder and "terminal" alike -- hence one class per arity
 # instead of two. select_computed(_more) still splits off into a separate ComputedQueryN from QueryN,
-# since the result type R differs (PartialModel[...] vs Tuple[..., ComputedResult]) and R can't vary
+# since the result type R differs (Partial[...] vs Tuple[..., ComputedResult]) and R can't vary
 # at runtime for a single dataclass.
 #
 # _order_by/_group_by/_computed still widen by one union member per table added (rather than gaining
@@ -155,7 +155,7 @@ class JoinType(Enum):
 # exactly as valid after it, with no re-wrapping needed.
 
 @dataclass(frozen=True)
-class Query1(Generic[TC], SqlQuery[PartialModel[TC]]):
+class Query1(Generic[TC], SqlQuery[Partial[TC]]):
     table1: Type[TC]
     _selection: Sequence[PropSelect[TC, Any]] | None = None
     _where: Constraint[TC] | None = None
@@ -225,7 +225,7 @@ class Query1(Generic[TC], SqlQuery[PartialModel[TC]]):
         return f'SELECT {selections} FROM {self.table1.__name__.lower()} WHERE {where_clause}{group_by_clause}{order_by_clause};', params
 
 @dataclass(frozen=True)
-class ComputedQuery1(Generic[TC], SqlQuery[Tuple[PartialModel[TC], ComputedResult]]):
+class ComputedQuery1(Generic[TC], SqlQuery[Tuple[Partial[TC], ComputedResult]]):
     table1: Type[TC]
     _selection: Sequence[PropSelect[TC, Any]] | None = None
     _where: Constraint[TC] | None = None
@@ -460,7 +460,7 @@ class DeleteQuery(Generic[TC], SqlQuery[None]):
 # --- 2 tables ---
 
 @dataclass(frozen=True)
-class Query2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1]]]):
+class Query2(Generic[TC, TC1], SqlQuery[Tuple[Partial[TC], Partial[TC1]]]):
     table1: Type[TC]
     table2: Type[TC1]
     join_type_2: JoinType
@@ -558,7 +558,7 @@ class Query2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1
         return f'SELECT {selections} FROM {from_clause} WHERE {where_clause}{group_by_clause}{order_by_clause};', params
 
 @dataclass(frozen=True)
-class ComputedQuery2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1], ComputedResult]]):
+class ComputedQuery2(Generic[TC, TC1], SqlQuery[Tuple[Partial[TC], Partial[TC1], ComputedResult]]):
     table1: Type[TC]
     table2: Type[TC1]
     join_type_2: JoinType
@@ -679,7 +679,7 @@ class ComputedQuery2(Generic[TC, TC1], SqlQuery[Tuple[PartialModel[TC], PartialM
 # --- 3 tables ---
 
 @dataclass(frozen=True)
-class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2]]]):
+class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[Partial[TC], Partial[TC1], Partial[TC2]]]):
     table1: Type[TC]
     table2: Type[TC1]
     table3: Type[TC2]
@@ -787,7 +787,7 @@ class Query3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialMode
         return f'SELECT {selections} FROM {from_clause} WHERE {where_clause}{group_by_clause}{order_by_clause};', params
 
 @dataclass(frozen=True)
-class ComputedQuery3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2], ComputedResult]]):
+class ComputedQuery3(Generic[TC, TC1, TC2], SqlQuery[Tuple[Partial[TC], Partial[TC1], Partial[TC2], ComputedResult]]):
     table1: Type[TC]
     table2: Type[TC1]
     table3: Type[TC2]
@@ -918,7 +918,7 @@ class ComputedQuery3(Generic[TC, TC1, TC2], SqlQuery[Tuple[PartialModel[TC], Par
 # --- 4 tables ---
 
 @dataclass(frozen=True)
-class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2], PartialModel[TC3]]]):
+class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[Partial[TC], Partial[TC1], Partial[TC2], Partial[TC3]]]):
     table1: Type[TC]
     table2: Type[TC1]
     table3: Type[TC2]
@@ -1022,7 +1022,7 @@ class Query4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], Partia
         return f'SELECT {selections} FROM {from_clause} WHERE {where_clause}{group_by_clause}{order_by_clause};', params
 
 @dataclass(frozen=True)
-class ComputedQuery4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[PartialModel[TC], PartialModel[TC1], PartialModel[TC2], PartialModel[TC3], ComputedResult]]):
+class ComputedQuery4(Generic[TC, TC1, TC2, TC3], SqlQuery[Tuple[Partial[TC], Partial[TC1], Partial[TC2], Partial[TC3], ComputedResult]]):
     table1: Type[TC]
     table2: Type[TC1]
     table3: Type[TC2]

@@ -19,7 +19,7 @@ class AggregateFunction(Enum):
 class ComputedResult(Selectable['ComputedResult']):
     """
     Dict-backed holder for the computed (aggregate) columns of a query result row, keyed by each
-    `Computed`'s alias. Mirrors `PartialModel`'s shape but isn't backed by a model class -- there's
+    `Computed`'s alias. Mirrors `Partial`'s shape but isn't backed by a model class -- there's
     no schema behind an aggregate expression, just whatever aliases the query selected.
     """
     __slots__ = ['_dict']

@@ -2,7 +2,7 @@ from typing import List, Iterable, Any, Dict, Type
 
 from elasticsearch import Elasticsearch, NotFoundError
 
-from pydoptic import BaseModel, Select, PartialModel
+from pydoptic import BaseModel, Select, Partial
 from pydoptic.selector import Prop
 from pydoptic_elastic.elastic_model import M
 from pydoptic_elastic.elastic_query import Query
@@ -39,7 +39,7 @@ class ElasticService:
         except NotFoundError:
             return None
         
-    def get_partial(self, cls: Type[M], id: str, **kwargs) -> PartialModel[M] | None:
+    def get_partial(self, cls: Type[M], id: str, **kwargs) -> Partial[M] | None:
         try:
             response = self.__client.get(index = cls._get_index_name(), id=id, **kwargs)
             return _GetResponse.doc.get_unsafe(response.body).map(lambda d: cls.partial(**d)).as_opt
@@ -59,7 +59,7 @@ class ElasticService:
             _source = hit['_source']
             yield query.model(**_source)
 
-    def search_partial(self, query: Query[M], source: Iterable[Select[M, Any]] | None = None, **kwargs) -> Iterable[PartialModel[M]]:
+    def search_partial(self, query: Query[M], source: Iterable[Select[M, Any]] | None = None, **kwargs) -> Iterable[Partial[M]]:
         _kwargs = kwargs if source is None else {'source': [sel.path for sel in source], **kwargs}
         search_results = self.__client.search(index=query.model._get_index_name(), query=query.to_dict(), **_kwargs)
         for hit in search_results['hits']['hits']:

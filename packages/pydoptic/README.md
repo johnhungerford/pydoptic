@@ -17,7 +17,7 @@ The examples below assume this import, unless a different one is shown:
 
 ```python3
 from pydoptic import (
-    BaseModel, PartialModel, select,
+    BaseModel, Partial, select,
     Discrim, Prop, PropArr, PropOpt, PropOptArr, PropSelect,
     Select, SelectArr, SelectOpt, SelectOptArr, SelectVal, SelectValue,
 )
@@ -69,8 +69,8 @@ model_1_kw: Model2 = Model2(prop_one=42, prop_two="hello")
 model_2_pr: Model2 = Model2.construct(Model1.prop_1.param(42), Model1.prop_2.param("hello"))
 
 # Partial model
-model_1_partial_kw: PartialModel[Model2] = Model2.partial(prop_one=42)
-model_1_partial_pr: PartialModel[Model2] = Model2.construct_partial(
+model_1_partial_kw: Partial[Model2] = Model2.partial(prop_one=42)
+model_1_partial_pr: Partial[Model2] = Model2.construct_partial(
     Model.prop_2.param("hello"),
 )
 
@@ -203,7 +203,7 @@ model: MyModel = MyModel(prop_1='value', prop_2=23, ...)
 dict_value: Dict[str, Any] = model.as_dict_full()
 str_value: str = json.dumps(dict_value)
 
-partial_model: PartialModel[MyModel] = MyModel.partial(prop_1='value', prop_2=23, ...)
+partial_model: Partial[MyModel] = MyModel.partial(prop_1='value', prop_2=23, ...)
 partial_dict: Dict[str, Any] = partial_model.as_dict_full()
 partial_str: str = json.dumps(partial_dict)
 ```
@@ -219,7 +219,7 @@ model: MyModel = MyModel(**dict_value)
 
 partial_str: str = ???
 partial_dict: Dict[str, Any] = json.loads(partial_str)
-partial_model: PartialModel[MyModel] = MyModel.partial(**partial_dict)
+partial_model: Partial[MyModel] = MyModel.partial(**partial_dict)
 ```
 
 Note that given how data can be read from and written to objects, there is no necessity that you validate to models or even partial models at all. My own preferred workflow is to use models for ingestion only -- that is, to consume external data and convert them to my domain in the form of Pydoptic models, and then feed these into the data backend. Once valid data is persisted in a backend, it can then retrieved and manipulated in the form of `dict`s, without ever having to generate a full model. This is a matter of preference, however.
@@ -287,9 +287,9 @@ Conversely, if you only wanted to contact one POC (and you don't care whether th
 
 In the above case, if there are many `Person`s selected byte `poc_select`, only the first one will be returned. If none are, `poc` will be `None`.
 
-To retrieve values from an incomplete representation of the data, such as a `PartialModel` or a `dict`, there are two variants of `get` that you can use. `get_unsafe` will try to retrieve the selected value and fail with a `ValueError` if it's inaccessible due to invalid data (if its inaccessible due to a valid optional property being missing, it will generate an empty `SelectValue` as expected). `get_safe`, on the other hand, will always fail silently, generating empty `SelectValue` when data is missing.
+To retrieve values from an incomplete representation of the data, such as a `Partial` or a `dict`, there are two variants of `get` that you can use. `get_unsafe` will try to retrieve the selected value and fail with a `ValueError` if it's inaccessible due to invalid data (if its inaccessible due to a valid optional property being missing, it will generate an empty `SelectValue` as expected). `get_safe`, on the other hand, will always fail silently, generating empty `SelectValue` when data is missing.
 
-Note that the type signature of `get_unsafe` and `get_safe` are a bit misleading. They will provide accurate types for non-model values (e.g., primitive properties like `int` or `str`), but they will treat nested models as though they are fully typed. When you retrieve a nested model from a `dict` or `PartialModel`, however, in all likelihood it is going to be another `dict` or `PartialModel`.
+Note that the type signature of `get_unsafe` and `get_safe` are a bit misleading. They will provide accurate types for non-model values (e.g., primitive properties like `int` or `str`), but they will treat nested models as though they are fully typed. When you retrieve a nested model from a `dict` or `Partial`, however, in all likelihood it is going to be another `dict` or `Partial`.
 
 ```python3
 class Inner(BaseModel):
@@ -310,7 +310,7 @@ inner_result_full: SelectValue[Inner] = Outer.inner.get(full)
 partial_val = Outer.partial(inner=Inner.partial(prop=23))
 # Accurately typed
 prop_result_partial: SelectValue[int] = prop_select.get_unsafe(partial_val)
-# Inaccurate type! Should be SelectValue[PartialModel[Inner]]
+# Inaccurate type! Should be SelectValue[Partial[Inner]]
 inner_result_partial: SelectValue[Inner] = Outer.inner.get_unsafe(partial_val) 
 
 dict_val = {'inner': {'prop': 23}}
@@ -385,7 +385,7 @@ for arr in prop_arr_select.get(value).as_list:
     arr.append(len(arr))
 ```
 
-To update incomplete data, use `update_unsafe` and `update_safe`. `update_unsafe` will fail with an exception if it's unable to access the data to be updated due to invalid data, whereas `update_safe` will simply ignore (and therefore skip) invalid cases. Like `get`, you need to be careful when updating nested models with the partial variants of `update`. The types will appear to be complete models when they are most likely `PartialModel`s or `dict`s.
+To update incomplete data, use `update_unsafe` and `update_safe`. `update_unsafe` will fail with an exception if it's unable to access the data to be updated due to invalid data, whereas `update_safe` will simply ignore (and therefore skip) invalid cases. Like `get`, you need to be careful when updating nested models with the partial variants of `update`. The types will appear to be complete models when they are most likely `Partial`s or `dict`s.
 
 
 #### `set`, `set_unsafe`, `set_safe`
@@ -460,7 +460,7 @@ print(value)
 
 In the above example, while `sel_opt` is able to clear the `opt` property, `sel_req` cannot clear the selected `req` property so instead it clears the next clearable property, setting `c` to an empty array.
 
-Clearing partial data is even more complicated, since partial data (`PartialModel`s and `dict`s) *can* be cleared even when its required in the model. For this reason, the partial variants of `clear` are distinguished into "strict" and "non-strict" variants. `clear_unsafe_strict` works just like `clear`: it will only clear clearable (optional/array) properties, and will try to clear selected property and work its way backward across the property chain until it finds a clearable property. `clear_unsafe`, on the other hand, will clear the selected property whether or not it's a required field. `clear_safe_strict` and `clear_safe` work the same way, but does not raise exceptions when they encounter invalid data, but simply skip it and move on.
+Clearing partial data is even more complicated, since partial data (`Partial`s and `dict`s) *can* be cleared even when its required in the model. For this reason, the partial variants of `clear` are distinguished into "strict" and "non-strict" variants. `clear_unsafe_strict` works just like `clear`: it will only clear clearable (optional/array) properties, and will try to clear selected property and work its way backward across the property chain until it finds a clearable property. `clear_unsafe`, on the other hand, will clear the selected property whether or not it's a required field. `clear_safe_strict` and `clear_safe` work the same way, but does not raise exceptions when they encounter invalid data, but simply skip it and move on.
 
 #### Precise `Select`s
 

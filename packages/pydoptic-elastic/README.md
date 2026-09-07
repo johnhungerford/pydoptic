@@ -35,7 +35,7 @@ for person in service.search(query):
     print(Person.name.get_val(person))
     # John
 
-# Retrieve only specific fields, as a PartialModel:
+# Retrieve only specific fields, as a Partial:
 for person in service.search_partial(query, source=[Person.name]):
     print(Person.name.get_val_unsafe(person))
     # John

@@ -10,10 +10,7 @@ infrastructure (everything from "Repo structure / packaging" onward) — both ar
 
 ## Where the work actually lives
 
-**Do the work in `/Users/johnhungerford/projects/personal/pydoptic` on branch `main` directly.**
-That's where every commit below actually landed. If you're reading this from a git worktree under
-`.claude/worktrees/...`, that worktree is stale (last touched near the start of this effort) and is
-*not* where this work happened — don't use it as a source of truth for current file contents.
+**Do the work on branch `main` directly.** That's where every commit below actually landed.
 
 Live Postgres integration tests connect to `host=localhost port=5432 dbname=pydoptic user=postgres
 password=password` (see `docker-compose.yml`); bring it up with `docker compose up -d` if it's not
@@ -77,7 +74,7 @@ local dev needs all three packages installed editable — `pip install -e packag
 | `sql_computed.py` | `AggregateFunction`, `ComputedResult`, `Computed[TC, A]` — aggregate/computed columns (SUM/COUNT/AVG/MIN/MAX) |
 | `sql_having.py` | `HavingConstraint`/`2`/`3`/`4` — HAVING conditions; a genuinely separate hierarchy from `Constraint*`, not reused, so `Computed` values stay statically unusable in WHERE/ON. Same `incr_arity()` treatment (arities 1-3) as `Constraint*` |
 | `sql_query.py` | The big one (~1150 lines): `SqlQuery` base + one query class per join arity, both plain (`Query1..4`) and `Computed` (`ComputedQuery1..4`) variants — no separate builder/terminal classes (see below). |
-| `sql_service.py` | `PsycoPgSqlClient`/`Transaction`/`*Response` — executes queries against Postgres via `psycopg`, decodes rows back into `PartialModel`/`ComputedResult` |
+| `sql_service.py` | `PsycoPgSqlClient`/`Transaction`/`*Response` — executes queries against Postgres via `psycopg`, decodes rows back into `Partial`/`ComputedResult` |
 
 Tests mirror this 1:1 under `packages/pydoptic-sql/test/` (`test_sql_query.py`,
 `test_sql_constraint.py`, `test_sql_params.py`, `test_sql_computed.py`, `test_sql_having.py`,
@@ -222,7 +219,7 @@ context the same way `join_inner`'s own `next: Type[TC1]` parameter already did)
   is fine since setting/mutating a computed aggregate value isn't meaningful anyway.
 - **Computed columns require a separate class per arity** (`ComputedQuery1..4` alongside `Query1..4`)
   because the result type `R` can't conditionally vary based on runtime state — it's fixed at
-  class-definition time (`class Query1(..., SqlQuery[PartialModel[TC]])` literally hardcodes `R`).
+  class-definition time (`class Query1(..., SqlQuery[Partial[TC]])` literally hardcodes `R`).
   This used to mean 8 *extra* classes on top of the builder/terminal split (`SelectQueryComputed`/
   `ComputedQuery1`, `JoinQuery2Computed`/`ComputedQuery2`, ...); now that the builder/terminal split is
   gone, it's just the 4 `ComputedQueryN` classes alongside the 4 `QueryN` ones — 8 total, not 16.
@@ -305,3 +302,8 @@ context the same way `join_inner`'s own `next: Type[TC1]` parameter already did)
   builder-and-terminal scope, and had to be walked back after the user caught it).
 - Commit only when explicitly asked, with a message explaining *why*, and only after re-verifying
   mypy + full test suite pass (don't trust an earlier check if anything changed since).
+- Don't check local paths or personal data into this file (or the repo generally) — no absolute
+  filesystem paths (e.g. `/Users/<name>/...`), no references to a specific machine's local session
+  state (e.g. `.claude/worktrees/...`), no personal identifying info. Use paths relative to the repo
+  root, and describe *where work landed* (which branch/commit) rather than *which machine it happened
+  on*. This file already had both stripped out once — keep it that way as it's updated going forward.
